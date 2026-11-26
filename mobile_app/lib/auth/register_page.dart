@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
 import '../core/theme.dart';
 import '../core/api.dart';
 import '../core/logo.dart';
+import '../core/icons.dart';
 import '../core/widgets.dart';
 import 'otp_verification_page.dart';
 
@@ -98,7 +98,7 @@ class _RegisterPageState extends State<RegisterPage> {
         backgroundColor: C.canvas,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(CupertinoIcons.chevron_back, size: 19, color: C.textPrimary),
+          icon: const LapisIcon(LapisIconName.chevronLeft, size: 19, color: C.textPrimary),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text('Resident Account', style: flex(14.5, color: C.textPrimary)),
@@ -111,10 +111,10 @@ class _RegisterPageState extends State<RegisterPage> {
             children: [
               const Align(alignment: Alignment.centerLeft, child: LapisLogo(size: 38)),
               const SizedBox(height: 12),
-              Text('Create or Activate Account', style: flex(17.5, color: C.textPrimary)),
+              Text('Create Account', style: flex(17.5, color: C.textPrimary)),
               const SizedBox(height: 4),
               Text(
-                'Already added by management? Use the same email to claim your profile and set your password via SMS OTP.',
+                'Use your email and mobile number to verify via SMS.',
                 style: sans(12, color: C.textMuted),
               ),
               const SizedBox(height: 16),
@@ -168,8 +168,8 @@ class _RegisterPageState extends State<RegisterPage> {
                       decoration: fieldDecoration(
                         hintText: 'At least 6 characters',
                         suffixIcon: IconButton(
-                          icon: Icon(
-                            _obscure ? CupertinoIcons.eye : CupertinoIcons.eye_slash,
+                          icon: LapisIcon(
+                            _obscure ? LapisIconName.eye : LapisIconName.eyeOff,
                             size: 16,
                             color: C.textMuted,
                           ),

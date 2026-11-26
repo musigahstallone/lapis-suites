@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
 import '../core/theme.dart';
 import '../core/models.dart';
+import '../core/icons.dart';
 import '../core/widgets.dart';
 import '../core/sheets.dart';
 
@@ -25,7 +25,7 @@ class UnitDetailsPage extends StatelessWidget {
         backgroundColor: C.surface,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(CupertinoIcons.chevron_back, size: 19, color: C.textPrimary),
+          icon: const LapisIcon(LapisIconName.chevronLeft, size: 19, color: C.textPrimary),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text('Unit ${unit.unitNumber}', style: flex(15, color: C.textPrimary)),
@@ -83,7 +83,7 @@ class UnitDetailsPage extends StatelessWidget {
                   tenants: allTenants,
                   onAssigned: () => Navigator.pop(context, true),
                 ),
-                icon: const Icon(CupertinoIcons.person_badge_plus, size: 15, color: C.ctaOn),
+                icon: const LapisIcon(LapisIconName.userPlus, size: 15, color: C.ctaOn),
                 label: Text('Assign Lease', style: sans(12.5, color: C.ctaOn, weight: FontWeight.w600)),
               ),
             ),
@@ -124,7 +124,10 @@ class UnitDetailsPage extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label, style: sans(12, color: C.textMuted)),
-          Text(value, style: sans(12, color: C.textPrimary, weight: FontWeight.w600)),
+          Text(
+            value,
+            style: sans(12, color: C.textPrimary, weight: FontWeight.w600).copyWith(fontFeatures: kTabularNums),
+          ),
         ],
       ),
     );

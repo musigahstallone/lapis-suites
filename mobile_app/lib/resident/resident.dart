@@ -6,6 +6,7 @@ import '../core/widgets.dart';
 import '../core/sheets.dart';
 import '../core/icons.dart';
 import '../pages/lease_details_page.dart';
+import '../pages/notifications_page.dart';
 import '../pages/profile_settings_page.dart';
 
 class ResidentHomeScreen extends StatefulWidget {
@@ -16,7 +17,7 @@ class ResidentHomeScreen extends StatefulWidget {
 }
 
 class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
-  int _navIndex = 0;
+  int _navIndex = 0; // 0: Home, 1: Payments, 2: Support, 3: Settings
   TenantModel? _tenant;
   LeaseModel? _lease;
   List<TransactionModel> _myTxs = [];
@@ -79,7 +80,7 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
       if (!silent && mounted) {
         setState(() {
           _isLoading = false;
-          _error = n.message ?? 'Unable to reach Lapis Suites server.';
+          _error = n.message ?? 'Unable to reach server.';
         });
       }
       return;
@@ -148,112 +149,10 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
     }
   }
 
-  void _openProfile() {
+  void _openNotificationsPage() {
     Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => const ProfileSettingsPage()))
+        .push(MaterialPageRoute(builder: (_) => const NotificationsPage()))
         .then((_) => _loadResidentScope(silent: true));
-  }
-
-  void _openNotificationsSheet() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: C.surface,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 14),
-                  decoration: BoxDecoration(color: C.border, borderRadius: BorderRadius.circular(99)),
-                ),
-              ),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('Notifications', style: flex(15, color: C.textPrimary)),
-                  if (_notifications.any((n) => !n.read))
-                    GestureDetector(
-                      onTap: () async {
-                        for (final n in _notifications.where((x) => !x.read)) {
-                          await ApiService.markNotificationRead(n.id);
-                        }
-                        if (ctx.mounted) Navigator.pop(ctx);
-                        _loadResidentScope(silent: true);
-                      },
-                      child: Text('Mark all read', style: sans(11.5, color: C.navy, weight: FontWeight.w600)),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if (_notifications.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 28),
-                  child: Center(
-                    child: Text('You are all caught up.', style: sans(12, color: C.textMuted)),
-                  ),
-                )
-              else
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 360),
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: _notifications.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1, color: C.borderLight),
-                    itemBuilder: (_, i) {
-                      final n = _notifications[i];
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              margin: const EdgeInsets.only(top: 5),
-                              width: 6,
-                              height: 6,
-                              decoration: BoxDecoration(
-                                color: n.read ? C.border : C.mintText,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(n.title, style: sans(12.5, color: C.textPrimary, weight: FontWeight.w600)),
-                                  if (n.message.isNotEmpty) ...[
-                                    const SizedBox(height: 2),
-                                    Text(n.message, style: sans(11.5, color: C.textSecondary)),
-                                  ],
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    formatShortDate(n.timestamp),
-                                    style: sans(10, color: C.textSoft, fontFeatures: kTabularNums),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   void _openPayRentSheet() {
@@ -290,17 +189,6 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
     );
   }
 
-  String _getTitleForTab() {
-    switch (_navIndex) {
-      case 1:
-        return 'Rent Payments';
-      case 2:
-        return 'Maintenance';
-      default:
-        return 'Resident Portal';
-    }
-  }
-
   String _getHeaderSubtitle() {
     final unitNum = _tenant?.currentUnitNumber.isNotEmpty == true
         ? _tenant!.currentUnitNumber
@@ -332,102 +220,57 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
     return parts.join(' + ');
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final unreadCount = _notifications.where((n) => !n.read).length;
-    final initials = _tenant?.avatarInitials ??
-        ApiService.currentUser?['avatarInitials']?.toString() ??
-        'RS';
-
-    return Scaffold(
-      backgroundColor: C.canvas,
-      appBar: AppBar(
-        backgroundColor: C.surface,
-        elevation: 0,
-        toolbarHeight: 58,
-        titleSpacing: 16,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
+  Widget _bellButton() {
+    final unread = _notifications.where((n) => !n.read).length;
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: IconButton(
+        tooltip: 'Notifications',
+        onPressed: _openNotificationsPage,
+        icon: Stack(
+          clipBehavior: Clip.none,
           children: [
-            Text(
-              _getTitleForTab(),
-              style: flex(15.5, color: C.textPrimary, weight: FontWeight.w700),
-            ),
-            const SizedBox(height: 1),
-            Text(
-              _getHeaderSubtitle(),
-              style: sans(11, color: C.textMuted, weight: FontWeight.w500),
-            ),
-          ],
-        ),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Container(height: 1, color: C.border.withValues(alpha: 0.7)),
-        ),
-        actions: [
-          // Clean Notification Bell Button (replaces "• Live" pill)
-          Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: IconButton(
-              tooltip: 'Notifications',
-              onPressed: _openNotificationsSheet,
-              icon: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  const LapisIcon(LapisIconName.bell, size: 19, color: C.textSecondary),
-                  if (unreadCount > 0)
-                    Positioned(
-                      right: -1,
-                      top: -1,
-                      child: Container(
-                        width: 7.5,
-                        height: 7.5,
-                        decoration: BoxDecoration(
-                          color: C.mintText,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: C.surface, width: 1.4),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-
-          // Profile Avatar Button
-          Padding(
-            padding: const EdgeInsets.only(right: 14),
-            child: GestureDetector(
-              onTap: _openProfile,
-              child: Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: C.navy,
-                  shape: BoxShape.circle,
-                ),
-                child: Center(
-                  child: Text(
-                    initials,
-                    style: flex(11, color: Colors.white, weight: FontWeight.w700),
+            const LapisIcon(LapisIconName.bell, size: 20, color: C.textPrimary),
+            if (unread > 0)
+              Positioned(
+                right: -1,
+                top: -1,
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: C.mintText,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: C.surface, width: 1.5),
                   ),
                 ),
               ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(strokeWidth: 2, color: C.navy))
-          : _error != null
-              ? ErrorStateCard(message: _error!, onRetry: () => _loadResidentScope())
-              : RefreshIndicator(
-                  onRefresh: _loadResidentScope,
-                  color: C.navy,
-                  backgroundColor: C.surface,
-                  child: _buildCurrentView(),
-                ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: C.canvas,
+      body: _navIndex == 3
+          ? ProfileSettingsPage(
+              showBackButton: false,
+              residentLease: _lease,
+              onDataChanged: () => _loadResidentScope(silent: true),
+            )
+          : _isLoading
+              ? const Center(child: CircularProgressIndicator(strokeWidth: 2, color: C.navy))
+              : _error != null
+                  ? ErrorStateCard(message: _error!, onRetry: () => _loadResidentScope())
+                  : RefreshIndicator(
+                      onRefresh: _loadResidentScope,
+                      color: C.navy,
+                      backgroundColor: C.surface,
+                      child: _buildCurrentView(),
+                    ),
       bottomNavigationBar: OrbixBottomNav(
         currentIndex: _navIndex,
         onTap: (i) => setState(() => _navIndex = i),
@@ -435,6 +278,7 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
           BottomNavItem(LapisIconName.home, 'Home'),
           BottomNavItem(LapisIconName.creditCard, 'Payments'),
           BottomNavItem(LapisIconName.wrench, 'Support'),
+          BottomNavItem(LapisIconName.settings, 'Settings'),
         ],
       ),
     );
@@ -443,22 +287,27 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
   Widget _buildCurrentView() {
     switch (_navIndex) {
       case 1:
-        return _buildPaymentsList();
+        return _buildPaymentsSliver();
       case 2:
-        return _buildSupportList();
+        return _buildSupportSliver();
       default:
-        return _buildHomeOverview();
+        return _buildHomeSliver();
     }
   }
 
-  // --- TAB 0: FINTECH HOME OVERVIEW ---
-  Widget _buildHomeOverview() {
+  // --- TAB 0: FINTECH HOME OVERVIEW WITH SLIVER APP BAR ---
+  Widget _buildHomeSliver() {
     final t = _tenant;
     final l = _lease;
     final credit = t?.accountCredit ?? 0;
     final due = t?.effectiveBalanceDue ?? 0;
     final hasCredit = credit > 0;
     final hasDue = due > 0;
+
+    final firstName = firstNameFrom(
+      t?.name ?? ApiService.currentUser?['name']?.toString(),
+      fallback: 'Resident',
+    );
 
     final nextDue = (t?.nextPaymentDueDate.isNotEmpty == true)
         ? formatShortDate(t!.nextPaymentDueDate)
@@ -470,248 +319,274 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
         ? due.toLocaleString()
         : (hasCredit ? credit.toLocaleString() : '0');
     final heroCaption = hasDue
-        ? 'Balance due · Next due $nextDue'
-        : (hasCredit
-            ? 'Prepaid credit · Covered until $nextDue'
-            : 'Account settled · Next due $nextDue');
+        ? 'Next due $nextDue'
+        : (hasCredit ? 'Prepaid · Covered until $nextDue' : 'Settled · Next due $nextDue');
     final breakdownText = _buildBalanceBreakdown();
 
-    return ListView(
+    return CustomScrollView(
       physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
-      padding: const EdgeInsets.only(bottom: 28),
-      children: [
-        // 1. Clean White Fintech Hero Balance Card (Amber strictly inside the pill badge!)
-        Container(
-          margin: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: C.surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: C.border.withValues(alpha: 0.7)),
-            boxShadow: [
-              BoxShadow(
-                color: C.navy.withValues(alpha: 0.04),
-                blurRadius: 12,
-                offset: const Offset(0, 3),
+      slivers: [
+        SliverAppBar(
+          pinned: true,
+          backgroundColor: C.surface,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          toolbarHeight: 62,
+          titleSpacing: 16,
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${greetingForTimeOfDay()}, $firstName',
+                style: flex(16.5, color: C.textPrimary, weight: FontWeight.w700),
+              ),
+              const SizedBox(height: 1),
+              Text(
+                _getHeaderSubtitle(),
+                style: sans(11.5, color: C.textMuted, weight: FontWeight.w500),
               ),
             ],
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'ACCOUNT STANDING',
-                    style: sans(10, color: C.textMuted, weight: FontWeight.w700, letterSpacing: 0.7),
-                  ),
-                  hasDue
-                      ? StatusPill.amber('Payment Due')
-                      : (hasCredit ? StatusPill.mint('Prepaid') : StatusPill.mint('Current')),
-                ],
-              ),
-              const SizedBox(height: 10),
-
-              // Fintech Currency Hierarchy: small muted KES + bold tabular figure
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  Text(
-                    'KES',
-                    style: sans(
-                      13.5,
-                      color: C.textMuted,
-                      weight: FontWeight.w500,
-                      fontFeatures: kTabularNums,
+          actions: [_bellButton()],
+          bottom: const PreferredSize(
+            preferredSize: Size.fromHeight(1),
+            child: Divider(height: 1, color: C.borderLight),
+          ),
+        ),
+        SliverPadding(
+          padding: const EdgeInsets.only(bottom: 28),
+          sliver: SliverList(
+            delegate: SliverChildListDelegate([
+              // 1. Clean White Fintech Hero Balance Card
+              Container(
+                margin: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: C.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: C.border.withValues(alpha: 0.7)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: C.navy.withValues(alpha: 0.04),
+                      blurRadius: 12,
+                      offset: const Offset(0, 3),
                     ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    heroNumber,
-                    style: flex(
-                      28,
-                      color: C.textPrimary,
-                      weight: FontWeight.w700,
-                      letterSpacing: -0.7,
-                      height: 1.08,
-                      fontFeatures: kTabularNums,
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'ACCOUNT STANDING',
+                          style: sans(10, color: C.textMuted, weight: FontWeight.w700, letterSpacing: 0.7),
+                        ),
+                        hasDue
+                            ? StatusPill.amber('Payment Due')
+                            : (hasCredit ? StatusPill.mint('Prepaid') : StatusPill.mint('Current')),
+                      ],
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 5),
-
-              Text(
-                heroCaption,
-                style: sans(12, color: C.textMuted, fontFeatures: kTabularNums),
-              ),
-
-              // Subtle collapsible balance breakdown line
-              if (breakdownText.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                GestureDetector(
-                  onTap: () => setState(() => _showBreakdown = !_showBreakdown),
-                  behavior: HitTestBehavior.opaque,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            _showBreakdown ? 'Hide breakdown' : 'Balance breakdown',
-                            style: sans(11, color: C.textSecondary, weight: FontWeight.w600),
+                    const SizedBox(height: 10),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Text(
+                          'KES',
+                          style: sans(
+                            13.5,
+                            color: C.textMuted,
+                            weight: FontWeight.w500,
+                            fontFeatures: kTabularNums,
                           ),
-                          const SizedBox(width: 4),
-                          LapisIcon(
-                            _showBreakdown ? LapisIconName.chevronUp : LapisIconName.chevronDown,
-                            size: 12,
-                            color: C.textSecondary,
-                          ),
-                        ],
-                      ),
-                      if (_showBreakdown) ...[
-                        const SizedBox(height: 6),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                          decoration: BoxDecoration(
-                            color: C.canvas,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            breakdownText,
-                            style: sans(11, color: C.textSecondary, fontFeatures: kTabularNums),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          heroNumber,
+                          style: flex(
+                            28,
+                            color: C.textPrimary,
+                            weight: FontWeight.w700,
+                            letterSpacing: -0.7,
+                            height: 1.08,
+                            fontFeatures: kTabularNums,
                           ),
                         ),
                       ],
-                    ],
-                  ),
-                ),
-              ],
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      heroCaption,
+                      style: sans(12, color: C.textMuted, fontFeatures: kTabularNums),
+                    ),
 
-              const SizedBox(height: 16),
-
-              // Primary CTA Button: #111B35 Lapis Navy, rounded-xl (12px), h-12 (48px), crisp Lucide Smartphone icon
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  onPressed: _openPayRentSheet,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: C.navy,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const LapisIcon(LapisIconName.smartphone, size: 17, color: Colors.white),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Pay Rent via M-Pesa',
-                        style: sans(13, color: Colors.white, weight: FontWeight.w600),
+                    if (breakdownText.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      GestureDetector(
+                        onTap: () => setState(() => _showBreakdown = !_showBreakdown),
+                        behavior: HitTestBehavior.opaque,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _showBreakdown ? 'Hide breakdown' : 'Breakdown',
+                                  style: sans(11, color: C.textSecondary, weight: FontWeight.w600),
+                                ),
+                                const SizedBox(width: 4),
+                                LapisIcon(
+                                  _showBreakdown ? LapisIconName.chevronUp : LapisIconName.chevronDown,
+                                  size: 12,
+                                  color: C.textSecondary,
+                                ),
+                              ],
+                            ),
+                            if (_showBreakdown) ...[
+                              const SizedBox(height: 6),
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                                decoration: BoxDecoration(
+                                  color: C.canvas,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  breakdownText,
+                                  style: sans(11, color: C.textSecondary, fontFeatures: kTabularNums),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
                       ),
                     ],
+                    const SizedBox(height: 16),
+
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: ElevatedButton(
+                        onPressed: _openPayRentSheet,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: C.navy,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const LapisIcon(LapisIconName.smartphone, size: 17, color: Colors.white),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Pay Rent via M-Pesa',
+                              style: sans(13, color: Colors.white, weight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // 2. Compact Borderless Horizontal Unit Metadata Strip
+              GestureDetector(
+                onTap: l != null
+                    ? () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => LeaseDetailsPage(lease: l)))
+                    : null,
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: C.surface,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _stripMetric(
+                          'Monthly Rent',
+                          l != null ? 'KES ${l.monthlyRent.toLocaleString()}' : '—',
+                        ),
+                      ),
+                      Container(width: 1, height: 26, color: C.borderLight),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 12),
+                          child: _stripMetric(
+                            'Deposit',
+                            l != null ? (l.isDepositSettled ? 'Paid' : 'Pending') : '—',
+                            valueColor: l != null && !l.isDepositSettled ? C.amberText : C.textPrimary,
+                          ),
+                        ),
+                      ),
+                      Container(width: 1, height: 26, color: C.borderLight),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 12),
+                          child: _stripMetric('Next Due', nextDue),
+                        ),
+                      ),
+                      if (l != null)
+                        const Padding(
+                          padding: EdgeInsets.only(left: 4),
+                          child: LapisIcon(LapisIconName.chevronRight, size: 14, color: C.textSoft),
+                        ),
+                    ],
                   ),
                 ),
               ),
-            ],
-          ),
-        ),
 
-        // 2. Compact Borderless Horizontal Unit Metadata Strip (tappable for Lease Details)
-        GestureDetector(
-          onTap: l != null
-              ? () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => LeaseDetailsPage(lease: l)))
-              : null,
-          behavior: HitTestBehavior.opaque,
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              color: C.surface,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: _stripMetric(
-                    'Monthly Rent',
-                    l != null ? 'KES ${l.monthlyRent.toLocaleString()}' : '—',
-                  ),
+              // 3. Recent Payments
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 16, 18, 6),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Recent Payments', style: flex(13.5, color: C.textPrimary)),
+                    if (_myTxs.isNotEmpty)
+                      GestureDetector(
+                        onTap: () => setState(() => _navIndex = 1),
+                        child: Text(
+                          'See all',
+                          style: sans(12, color: C.navy, weight: FontWeight.w600),
+                        ),
+                      ),
+                  ],
                 ),
-                Container(width: 1, height: 26, color: C.borderLight),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 12),
-                    child: _stripMetric(
-                      'Deposit',
-                      l != null ? (l.isDepositSettled ? 'Paid' : 'Pending') : '—',
-                      valueColor: l != null && !l.isDepositSettled ? C.amberText : C.textPrimary,
+              ),
+
+              if (_myTxs.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  child: Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: C.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: C.border.withValues(alpha: 0.7)),
+                    ),
+                    child: Column(
+                      children: [
+                        const LapisIcon(LapisIconName.receipt, size: 22, color: C.textSoft),
+                        const SizedBox(height: 8),
+                        Text('No payments yet', style: sans(12.5, color: C.textMuted)),
+                      ],
                     ),
                   ),
-                ),
-                Container(width: 1, height: 26, color: C.borderLight),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 12),
-                    child: _stripMetric('Next Due', nextDue),
-                  ),
-                ),
-                if (l != null)
-                  const Padding(
-                    padding: EdgeInsets.only(left: 4),
-                    child: LapisIcon(LapisIconName.chevronRight, size: 14, color: C.textSoft),
-                  ),
-              ],
-            ),
+                )
+              else
+                ..._myTxs.take(4).map(_buildPaymentRow),
+            ]),
           ),
         ),
-
-        // 3. Recent Payments Header
-        Padding(
-          padding: const EdgeInsets.fromLTRB(18, 16, 18, 6),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Recent Payments', style: flex(13.5, color: C.textPrimary)),
-              if (_myTxs.isNotEmpty)
-                GestureDetector(
-                  onTap: () => setState(() => _navIndex = 1),
-                  child: Text(
-                    'See all (${_myTxs.length})',
-                    style: sans(11.5, color: C.navy, weight: FontWeight.w600, fontFeatures: kTabularNums),
-                  ),
-                ),
-            ],
-          ),
-        ),
-
-        if (_myTxs.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: C.surface,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: C.border.withValues(alpha: 0.7)),
-              ),
-              child: Column(
-                children: [
-                  const LapisIcon(LapisIconName.receipt, size: 22, color: C.textSoft),
-                  const SizedBox(height: 8),
-                  Text('No payment records yet', style: sans(12.5, color: C.textMuted)),
-                ],
-              ),
-            ),
-          )
-        else
-          ..._myTxs.take(5).map(_buildPaymentRow),
       ],
     );
   }
@@ -733,6 +608,7 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
     );
   }
 
+  /// Resident payment row: full non-truncated M-Pesa confirmation code in monospace
   Widget _buildPaymentRow(TransactionModel tx) {
     final rec = tx.reconciled;
     return OrbixListTile(
@@ -740,125 +616,133 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
       iconColor: rec ? C.mintText : C.amberText,
       iconBg: rec ? C.mintBg : C.amberBg,
       circularIcon: true,
-      title: tx.reference,
-      isMonoTitle: true,
-      subtitle: '${formatShortDate(tx.date)} · ${formatPaymentMethodLabel(tx.method)}',
+      title: formatShortDate(tx.date),
+      subtitleWidget: Text(
+        tx.reference,
+        softWrap: false,
+        style: mono(11.5, color: C.textSecondary, weight: FontWeight.w600, letterSpacing: 0.3),
+      ),
       amountPrefix: 'KES',
       amount: tx.amount.toLocaleString(),
       amountColor: rec ? C.mintText : C.amberText,
-      status: rec ? StatusPill.mint('Reconciled') : StatusPill.amber(tx.statusDisplayLabel),
+      status: rec ? StatusPill.mint('Reconciled', hasDot: false) : StatusPill.amber(tx.statusDisplayLabel),
       onTap: () => showPaymentDetailsSheet(context, tx),
     );
   }
 
-  // --- TAB 1: PAYMENTS LIST ---
-  Widget _buildPaymentsList() {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                '${_myTxs.length} Payments',
-                style: sans(11.5, color: C.textMuted, weight: FontWeight.w600, fontFeatures: kTabularNums),
-              ),
-              GestureDetector(
-                onTap: _openPayRentSheet,
-                child: StatusPill.blue('+ Make Payment', hasDot: false),
-              ),
-            ],
+  // --- TAB 1: PAYMENTS ---
+  Widget _buildPaymentsSliver() {
+    return CustomScrollView(
+      controller: _payScrollCtrl,
+      physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+      slivers: [
+        SliverAppBar(
+          pinned: true,
+          backgroundColor: C.surface,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          titleSpacing: 16,
+          title: Text('Payments', style: flex(17, color: C.textPrimary)),
+          actions: [
+            TextButton(
+              onPressed: _openPayRentSheet,
+              child: Text('+ Pay', style: sans(12.5, color: C.navy, weight: FontWeight.w700)),
+            ),
+            const SizedBox(width: 4),
+          ],
+          bottom: const PreferredSize(
+            preferredSize: Size.fromHeight(1),
+            child: Divider(height: 1, color: C.borderLight),
           ),
         ),
-        Expanded(
-          child: _myTxs.isEmpty
-              ? Center(child: Text('No transactions on file yet.', style: sans(12, color: C.textMuted)))
-              : ListView.builder(
-                  controller: _payScrollCtrl,
-                  physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
-                  padding: const EdgeInsets.only(bottom: 24),
-                  itemCount: _myTxs.length + (_hasMorePay ? 1 : 0),
-                  itemBuilder: (context, i) {
-                    if (i == _myTxs.length) {
-                      return const Padding(
-                        padding: EdgeInsets.all(14),
-                        child: Center(child: CircularProgressIndicator(strokeWidth: 2, color: C.navy)),
-                      );
-                    }
-                    return _buildPaymentRow(_myTxs[i]);
-                  },
-                ),
-        ),
+        if (_myTxs.isEmpty)
+          SliverFillRemaining(
+            child: Center(child: Text('No payments yet.', style: sans(12.5, color: C.textMuted))),
+          )
+        else
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            sliver: SliverList.builder(
+              itemCount: _myTxs.length + (_hasMorePay ? 1 : 0),
+              itemBuilder: (_, i) {
+                if (i == _myTxs.length) {
+                  return const Padding(
+                    padding: EdgeInsets.all(14),
+                    child: Center(child: CircularProgressIndicator(strokeWidth: 2, color: C.navy)),
+                  );
+                }
+                return _buildPaymentRow(_myTxs[i]);
+              },
+            ),
+          ),
       ],
     );
   }
 
-  // --- TAB 2: SUPPORT / MAINTENANCE ---
-  Widget _buildSupportList() {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: SizedBox(
-            width: double.infinity,
-            height: 44,
-            child: ElevatedButton(
+  // --- TAB 2: SUPPORT ---
+  Widget _buildSupportSliver() {
+    return CustomScrollView(
+      physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+      slivers: [
+        SliverAppBar(
+          pinned: true,
+          backgroundColor: C.surface,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          titleSpacing: 16,
+          title: Text('Maintenance', style: flex(17, color: C.textPrimary)),
+          actions: [
+            TextButton(
               onPressed: _openReportIssueModal,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: C.navy,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+              child: Text('+ Report', style: sans(12.5, color: C.navy, weight: FontWeight.w700)),
+            ),
+            const SizedBox(width: 4),
+          ],
+          bottom: const PreferredSize(
+            preferredSize: Size.fromHeight(1),
+            child: Divider(height: 1, color: C.borderLight),
+          ),
+        ),
+        if (_myTickets.isEmpty)
+          SliverFillRemaining(
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  const LapisIcon(LapisIconName.plus, size: 15, color: Colors.white),
-                  const SizedBox(width: 7),
-                  Text('Report Maintenance Issue', style: sans(12.5, color: Colors.white, weight: FontWeight.w600)),
+                  const LapisIcon(LapisIconName.shieldCheck, size: 28, color: C.mintText),
+                  const SizedBox(height: 8),
+                  Text('No open tickets', style: sans(12.5, color: C.textMuted)),
                 ],
               ),
             ),
+          )
+        else
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            sliver: SliverList.builder(
+              itemCount: _myTickets.length,
+              itemBuilder: (_, i) {
+                final tk = _myTickets[i];
+                final isResolved = tk.status == 'resolved';
+                final isInProgress = tk.status == 'in_progress';
+                return OrbixListTile(
+                  icon: LapisIconName.wrench,
+                  iconColor: isResolved ? C.mintText : (isInProgress ? C.navy : C.amberText),
+                  iconBg: isResolved ? C.mintBg : (isInProgress ? C.navySoftBg : C.amberBg),
+                  circularIcon: true,
+                  title: tk.title,
+                  subtitle: formatShortDate(tk.createdAt),
+                  amount: '',
+                  status: isResolved
+                      ? StatusPill.mint(formatStatusLabel(tk.status), hasDot: false)
+                      : (isInProgress
+                          ? StatusPill.blue(formatStatusLabel(tk.status), hasDot: true)
+                          : StatusPill.amber(formatStatusLabel(tk.status))),
+                  onTap: () => showMaintenanceDetailSheet(context, tk, isAdmin: false),
+                );
+              },
+            ),
           ),
-        ),
-        Expanded(
-          child: _myTickets.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const LapisIcon(LapisIconName.shieldCheck, size: 28, color: C.mintText),
-                      const SizedBox(height: 8),
-                      Text('No open maintenance tickets', style: sans(12.5, color: C.textMuted)),
-                    ],
-                  ),
-                )
-              : ListView.builder(
-                  physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
-                  padding: const EdgeInsets.only(bottom: 24),
-                  itemCount: _myTickets.length,
-                  itemBuilder: (context, i) {
-                    final tk = _myTickets[i];
-                    final isResolved = tk.status == 'resolved';
-                    final isInProgress = tk.status == 'in_progress';
-
-                    return OrbixListTile(
-                      icon: LapisIconName.wrench,
-                      iconColor: isResolved ? C.mintText : (isInProgress ? C.navy : C.amberText),
-                      iconBg: isResolved ? C.mintBg : (isInProgress ? C.navySoftBg : C.amberBg),
-                      circularIcon: true,
-                      title: tk.title,
-                      subtitle: '${formatCategoryLabel(tk.category)} · ${formatShortDate(tk.createdAt)}',
-                      amount: '',
-                      status: isResolved
-                          ? StatusPill.mint(formatStatusLabel(tk.status))
-                          : (isInProgress
-                              ? StatusPill.blue(formatStatusLabel(tk.status), hasDot: true)
-                              : StatusPill.amber(formatStatusLabel(tk.status))),
-                      onTap: () => showMaintenanceDetailSheet(context, tk, isAdmin: false),
-                    );
-                  },
-                ),
-        ),
       ],
     );
   }

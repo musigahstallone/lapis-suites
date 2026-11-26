@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
 import '../core/theme.dart';
 import '../core/api.dart';
 import '../core/logo.dart';
+import '../core/icons.dart';
 import '../core/widgets.dart';
 import 'otp_verification_page.dart';
 import 'login_page.dart';
@@ -74,7 +74,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         backgroundColor: C.canvas,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(CupertinoIcons.chevron_back, size: 19, color: C.textPrimary),
+          icon: const LapisIcon(LapisIconName.chevronLeft, size: 19, color: C.textPrimary),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text('Password Recovery', style: flex(14.5, color: C.textPrimary)),
@@ -87,10 +87,10 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
             children: [
               const Align(alignment: Alignment.centerLeft, child: LapisLogo(size: 38)),
               const SizedBox(height: 14),
-              Text('Forgot your password?', style: flex(17.5, color: C.textPrimary)),
+              Text('Forgot password?', style: flex(17.5, color: C.textPrimary)),
               const SizedBox(height: 4),
               Text(
-                'Enter your registered email address and we will send a 6-digit SMS OTP to your linked phone number.',
+                'We will send a 6-digit SMS code to your phone.',
                 style: sans(12, color: C.textMuted),
               ),
               const SizedBox(height: 18),
@@ -259,8 +259,8 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
                       decoration: fieldDecoration(
                         hintText: 'Minimum 6 characters',
                         suffixIcon: IconButton(
-                          icon: Icon(
-                            _obscure ? CupertinoIcons.eye : CupertinoIcons.eye_slash,
+                          icon: LapisIcon(
+                            _obscure ? LapisIconName.eye : LapisIconName.eyeOff,
                             size: 16,
                             color: C.textMuted,
                           ),

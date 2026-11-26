@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'theme.dart';
 import 'models.dart';
 import 'api.dart';
+import 'icons.dart';
 import 'widgets.dart';
 
 class MaintenanceTemplate {
@@ -236,7 +236,7 @@ void showPaymentDetailsSheet(
                             height: 15,
                             child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                           )
-                        : const Icon(CupertinoIcons.checkmark_shield, size: 15, color: Colors.white),
+                        : const LapisIcon(LapisIconName.shieldCheck, size: 15, color: Colors.white),
                     label: Text(
                       isApproving ? 'Verifying...' : 'Approve & Reconcile Payment',
                       style: sans(12.5, color: Colors.white, weight: FontWeight.w600),
@@ -508,7 +508,7 @@ void showStkPushSheet(
                             });
                           }
                         },
-                        icon: const Icon(CupertinoIcons.device_phone_portrait, size: 15, color: C.ctaOn),
+                        icon: const LapisIcon(LapisIconName.smartphone, size: 15, color: C.ctaOn),
                         label: Text('Send M-Pesa Prompt', style: sans(12.5, color: C.ctaOn, weight: FontWeight.w600)),
                       ),
                     ),
@@ -636,7 +636,7 @@ void showStkPushSheet(
                           height: 15,
                           child: CircularProgressIndicator(strokeWidth: 2, color: C.ctaOn),
                         )
-                      : const Icon(CupertinoIcons.checkmark_shield, size: 15, color: C.ctaOn),
+                      : const LapisIcon(LapisIconName.shieldCheck, size: 15, color: C.ctaOn),
                   label: Text(
                     isSubmittingManual ? 'Submitting...' : 'Submit for Verification',
                     style: sans(12.5, color: C.ctaOn, weight: FontWeight.w600),
@@ -674,7 +674,7 @@ void showStkPushSheet(
                       width: 48,
                       height: 48,
                       decoration: const BoxDecoration(color: C.blueBg, shape: BoxShape.circle),
-                      child: const Icon(CupertinoIcons.device_phone_portrait, size: 22, color: C.blueText),
+                      child: const Center(child: LapisIcon(LapisIconName.smartphone, size: 22, color: C.blueText)),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -740,10 +740,12 @@ void showStkPushSheet(
                         color: isPendingVerification ? C.amberBg : C.mintBg,
                         shape: BoxShape.circle,
                       ),
-                      child: Icon(
-                        isPendingVerification ? CupertinoIcons.clock : CupertinoIcons.checkmark_alt,
-                        size: 25,
-                        color: isPendingVerification ? C.amberText : C.mintText,
+                      child: Center(
+                        child: LapisIcon(
+                          isPendingVerification ? LapisIconName.clock : LapisIconName.check,
+                          size: 24,
+                          color: isPendingVerification ? C.amberText : C.mintText,
+                        ),
                       ),
                     ),
                   ),
@@ -1079,22 +1081,16 @@ void showAdminCollectPaymentSheet(
                     ),
                   ] else ...[
                     InlineAlert(
-                      message: 'Enter the 6-digit confirmation OTP sent to $maskedAdminPhone.',
+                      message: 'Code sent to $maskedAdminPhone',
                       isSuccess: true,
                     ),
                     const SizedBox(height: 12),
-                    Text('Admin 6-Digit OTP', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
-                    const SizedBox(height: 5),
-                    TextField(
+                    Text('Admin OTP', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
+                    const SizedBox(height: 8),
+                    OtpCodeInput(
                       controller: otpCtrl,
-                      keyboardType: TextInputType.number,
-                      textAlign: TextAlign.center,
-                      style: mono(18, color: C.navy, weight: FontWeight.w700, letterSpacing: 6),
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(6),
-                      ],
-                      decoration: fieldDecoration(hintText: '••••••'),
+                      autoFocus: true,
+                      autoListenSms: true,
                     ),
                     const SizedBox(height: 14),
                     SizedBox(
@@ -2223,13 +2219,13 @@ void showUnitTypesSheet(BuildContext context, {VoidCallback? onChanged}) {
                               ),
                               IconButton(
                                 tooltip: 'Edit',
-                                icon: const Icon(CupertinoIcons.pencil, size: 16, color: C.navy),
+                                icon: const LapisIcon(LapisIconName.pencil, size: 16, color: C.navy),
                                 onPressed: () => openEditor(ctx, setMState, existing: ut),
                               ),
                               if (!ut.hasAnyUnits)
                                 IconButton(
                                   tooltip: 'Delete',
-                                  icon: const Icon(CupertinoIcons.trash, size: 16, color: C.roseText),
+                                  icon: const LapisIcon(LapisIconName.trash, size: 16, color: C.roseText),
                                   onPressed: () async {
                                     final res = await ApiService.deleteUnitType(ut.id);
                                     if (!ctx.mounted) return;

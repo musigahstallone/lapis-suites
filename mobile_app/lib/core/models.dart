@@ -73,6 +73,32 @@ String toCanonicalKenyaPhone(String raw) {
   return raw.replaceAll(RegExp(r'\D'), '');
 }
 
+/// Clean local Kenyan phone formatting: 0703 438 444
+String formatKenyanPhoneDisplay(String? raw) {
+  if (raw == null || raw.trim().isEmpty) return '';
+  final nine = extractKenyaNineDigits(raw);
+  if (nine.length == 9) {
+    return '0${nine.substring(0, 3)} ${nine.substring(3, 6)} ${nine.substring(6, 9)}';
+  }
+  return raw.trim();
+}
+
+/// Time-of-day greeting for SliverAppBar headers
+String greetingForTimeOfDay() {
+  final hour = DateTime.now().hour;
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+/// Extract clean first name for greeting header
+String firstNameFrom(String? raw, {String fallback = 'there'}) {
+  final cleaned = (raw ?? '').trim();
+  if (cleaned.isEmpty) return fallback;
+  final parts = cleaned.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+  return parts.isNotEmpty ? parts.first : fallback;
+}
+
 String currentMonthYearLabel() {
   const months = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -530,6 +556,21 @@ class DashboardData {
   int get totalCredits => tenants.fold(0, (sum, t) => sum + t.accountCredit);
   int get occupiedUnits => units.where((u) => u.isOccupied).length;
   double get occupancyRate => units.isEmpty ? 0 : (occupiedUnits / units.length) * 100;
+
+  /// Reconciled rent collected in the current calendar month (YYYY-MM)
+  int get collectedThisMonth {
+    final now = DateTime.now();
+    final ym = '${now.year}-${now.month.toString().padLeft(2, '0')}';
+    return transactions
+        .where((tx) => tx.reconciled && (tx.date.startsWith(ym) || tx.timestamp.startsWith(ym)))
+        .fold(0, (sum, tx) => sum + tx.amount);
+  }
+
+  /// Ratio (0.0 .. 1.0) of monthly rent collected vs expected rent roll
+  double get collectionProgress {
+    if (totalRentRoll <= 0) return 0.0;
+    return (collectedThisMonth / totalRentRoll).clamp(0.0, 1.0);
+  }
 }
 
 class NotificationModel {

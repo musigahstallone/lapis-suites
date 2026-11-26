@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
 import '../core/theme.dart';
 import '../core/api.dart';
 import '../core/logo.dart';
+import '../core/icons.dart';
 import '../core/widgets.dart';
 import '../landlord/landlord.dart';
 import '../resident/resident.dart';
@@ -142,12 +142,7 @@ class _LoginPageState extends State<LoginPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Text('Sign in to your account', style: flex(15.5, color: C.textPrimary)),
-                      const SizedBox(height: 3),
-                      Text(
-                        'Resident and management portal access',
-                        style: sans(12, color: C.textMuted),
-                      ),
+                      Text('Sign in', style: flex(16, color: C.textPrimary)),
                       const SizedBox(height: 16),
 
                       if (_error != null) ...[
@@ -193,8 +188,8 @@ class _LoginPageState extends State<LoginPage> {
                         decoration: fieldDecoration(
                           hintText: 'Enter your password',
                           suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscure ? CupertinoIcons.eye : CupertinoIcons.eye_slash,
+                            icon: LapisIcon(
+                              _obscure ? LapisIconName.eye : LapisIconName.eyeOff,
                               size: 16,
                               color: C.textMuted,
                             ),

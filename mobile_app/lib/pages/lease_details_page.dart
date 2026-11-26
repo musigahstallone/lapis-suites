@@ -1,13 +1,20 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
 import '../core/theme.dart';
 import '../core/models.dart';
 import '../core/api.dart';
+import '../core/icons.dart';
 import '../core/widgets.dart';
+import '../core/crud_sheets.dart';
 
 class LeaseDetailsPage extends StatefulWidget {
   final LeaseModel lease;
-  const LeaseDetailsPage({super.key, required this.lease});
+  final List<UnitModel> vacantUnits;
+
+  const LeaseDetailsPage({
+    super.key,
+    required this.lease,
+    this.vacantUnits = const [],
+  });
 
   @override
   State<LeaseDetailsPage> createState() => _LeaseDetailsPageState();
@@ -23,6 +30,13 @@ class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
     _lease = widget.lease;
   }
 
+  Future<void> _reloadLease() async {
+    final fresh = await ApiService.fetchLeaseById(_lease.id);
+    if (fresh != null && mounted) {
+      setState(() => _lease = fresh);
+    }
+  }
+
   Future<void> _handleTerminate() async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -31,7 +45,7 @@ class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         title: Text('Terminate Lease', style: flex(14.5, color: C.textPrimary)),
         content: Text(
-          'Are you sure you want to conclude lease ${_lease.leaseNumber} for Unit ${_lease.unitNumber}?',
+          'End lease ${_lease.leaseNumber} for Unit ${_lease.unitNumber}?',
           style: sans(12.5, color: C.textSecondary),
         ),
         actions: [
@@ -66,6 +80,7 @@ class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
   @override
   Widget build(BuildContext context) {
     final l = _lease;
+    final isAdmin = ApiService.isLandlord;
 
     return Scaffold(
       backgroundColor: C.canvas,
@@ -73,13 +88,25 @@ class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
         backgroundColor: C.surface,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(CupertinoIcons.chevron_back, size: 19, color: C.textPrimary),
+          icon: const LapisIcon(LapisIconName.chevronLeft, size: 19, color: C.textPrimary),
           onPressed: () => Navigator.pop(context),
         ),
-        title: Text('Lease Agreement', style: flex(15, color: C.textPrimary)),
+        title: Text('Lease · Unit ${l.unitNumber}', style: flex(15, color: C.textPrimary)),
+        actions: [
+          if (l.isActive && isAdmin)
+            IconButton(
+              tooltip: 'Edit Lease',
+              icon: const LapisIcon(LapisIconName.pencil, size: 17, color: C.textSecondary),
+              onPressed: () => showAmendLeaseSheet(
+                context,
+                lease: l,
+                onAmended: _reloadLease,
+              ),
+            ),
+        ],
         bottom: const PreferredSize(
           preferredSize: Size.fromHeight(1),
-          child: Divider(height: 1, color: C.border),
+          child: Divider(height: 1, color: C.borderLight),
         ),
       ),
       body: ListView(
@@ -90,8 +117,8 @@ class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: C.surface,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: C.border),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: C.border.withValues(alpha: 0.75)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -99,7 +126,7 @@ class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(l.leaseNumber, style: mono(14, color: C.textPrimary, weight: FontWeight.w700)),
+                    Text(l.leaseNumber, style: mono(13.5, color: C.textPrimary, weight: FontWeight.w700)),
                     l.isActive
                         ? StatusPill.mint(formatStatusLabel(l.status))
                         : StatusPill.slate(formatStatusLabel(l.status)),
@@ -109,40 +136,77 @@ class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
                 const Divider(height: 1, color: C.borderLight),
                 const SizedBox(height: 8),
                 _item('Resident', l.tenantName),
-                _item('Unit', 'Unit ${l.unitNumber} (${formatUnitTypeLabel(l.unitType)})'),
+                _item('Unit', 'Unit ${l.unitNumber} · ${formatUnitTypeLabel(l.unitType)}'),
                 _item('Monthly Rent', 'KES ${l.monthlyRent.toLocaleString()}'),
                 _item(
-                  'Security Deposit',
+                  'Deposit',
                   'KES ${l.depositAmount.toLocaleString()} · ${l.isDepositSettled ? "Paid" : "Pending"}',
                 ),
-                _item('Start Date', formatShortDate(l.startDate)),
-                _item('End Date', formatShortDate(l.endDate)),
-                _item('Next Due Date', formatShortDate(l.nextPaymentDueDate)),
+                _item('Term', '${formatShortDate(l.startDate)} – ${formatShortDate(l.endDate)}'),
+                _item('Next Due', formatShortDate(l.nextPaymentDueDate)),
               ],
             ),
           ),
-          const SizedBox(height: 14),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: C.surface,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: C.border),
+
+          if (l.terms.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: C.surface,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: C.border.withValues(alpha: 0.75)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Terms', style: flex(13, color: C.textPrimary)),
+                  const SizedBox(height: 6),
+                  Text(l.terms, style: sans(12, color: C.textSecondary, height: 1.45)),
+                ],
+              ),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          ],
+
+          if (l.isActive && isAdmin) ...[
+            const SizedBox(height: 16),
+            Row(
               children: [
-                Text('Agreement Terms', style: flex(13, color: C.textPrimary)),
-                const SizedBox(height: 6),
-                Text(
-                  l.terms.isNotEmpty ? l.terms : 'Standard residential tenancy contract for Lapis Suites.',
-                  style: sans(12, color: C.textSecondary, height: 1.45),
+                Expanded(
+                  child: SizedBox(
+                    height: 43,
+                    child: OutlinedButton.icon(
+                      onPressed: () => showAmendLeaseSheet(
+                        context,
+                        lease: l,
+                        onAmended: _reloadLease,
+                      ),
+                      icon: const LapisIcon(LapisIconName.pencil, size: 14, color: C.navy),
+                      label: Text('Amend', style: sans(12.5, color: C.navy, weight: FontWeight.w600)),
+                    ),
+                  ),
                 ),
+                if (widget.vacantUnits.isNotEmpty) ...[
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: SizedBox(
+                      height: 43,
+                      child: OutlinedButton.icon(
+                        onPressed: () => showTransferLeaseSheet(
+                          context,
+                          lease: l,
+                          vacantUnits: widget.vacantUnits,
+                          onTransferred: () => Navigator.pop(context, true),
+                        ),
+                        icon: const LapisIcon(LapisIconName.arrowLeftRight, size: 14, color: C.navy),
+                        label: Text('Transfer', style: sans(12.5, color: C.navy, weight: FontWeight.w600)),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
-          ),
-          if (l.isActive && ApiService.isLandlord) ...[
-            const SizedBox(height: 20),
+            const SizedBox(height: 10),
             SizedBox(
               height: 43,
               child: OutlinedButton(
@@ -171,7 +235,7 @@ class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
             child: Text(
               val,
               textAlign: TextAlign.right,
-              style: sans(12, color: C.textPrimary, weight: FontWeight.w600),
+              style: sans(12, color: C.textPrimary, weight: FontWeight.w600, fontFeatures: kTabularNums),
             ),
           ),
         ],

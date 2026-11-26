@@ -2,7 +2,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 /// Crisp Lucide-style 24x24 vector SVG icons drawn natively with CustomPainter.
-/// Immune to Flutter icon-font tree-shaking and missing-glyph (`▯`) bugs across all Android/iOS builds.
+/// Supports both outline and filled active states. Immune to icon-font tree-shaking (`▯`).
 enum LapisIconName {
   smartphone,
   wallet,
@@ -10,9 +10,14 @@ enum LapisIconName {
   receipt,
   bell,
   user,
+  users,
   home,
   creditCard,
   wrench,
+  settings,
+  layers,
+  search,
+  arrowLeftRight,
   plus,
   chevronRight,
   chevronLeft,
@@ -42,6 +47,7 @@ class LapisIcon extends StatelessWidget {
   final double size;
   final Color color;
   final double strokeWidth;
+  final bool filled;
 
   const LapisIcon(
     this.name, {
@@ -49,6 +55,7 @@ class LapisIcon extends StatelessWidget {
     this.size = 18,
     this.color = const Color(0xFF172033),
     this.strokeWidth = 1.85,
+    this.filled = false,
   });
 
   @override
@@ -61,6 +68,7 @@ class LapisIcon extends StatelessWidget {
           name: name,
           color: color,
           strokeWidth: strokeWidth,
+          filled: filled,
         ),
       ),
     );
@@ -71,11 +79,13 @@ class _LucidePainter extends CustomPainter {
   final LapisIconName name;
   final Color color;
   final double strokeWidth;
+  final bool filled;
 
   const _LucidePainter({
     required this.name,
     required this.color,
     required this.strokeWidth,
+    required this.filled,
   });
 
   @override
@@ -96,20 +106,22 @@ class _LucidePainter extends CustomPainter {
       ..color = color
       ..style = PaintingStyle.fill;
 
+    final softFill = Paint()
+      ..color = color.withValues(alpha: 0.16)
+      ..style = PaintingStyle.fill;
+
     switch (name) {
       case LapisIconName.smartphone:
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(const Rect.fromLTWH(5, 2, 14, 20), const Radius.circular(2.5)),
-          p,
-        );
+        final rr = RRect.fromRectAndRadius(const Rect.fromLTWH(5, 2, 14, 20), const Radius.circular(2.5));
+        if (filled) canvas.drawRRect(rr, softFill);
+        canvas.drawRRect(rr, p);
         canvas.drawLine(const Offset(12, 18), const Offset(12.01, 18), p..strokeWidth = 2.2);
         break;
 
       case LapisIconName.wallet:
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(const Rect.fromLTWH(3, 6, 18, 14), const Radius.circular(2.5)),
-          p,
-        );
+        final rr = RRect.fromRectAndRadius(const Rect.fromLTWH(3, 6, 18, 14), const Radius.circular(2.5));
+        if (filled) canvas.drawRRect(rr, softFill);
+        canvas.drawRRect(rr, p);
         canvas.drawPath(
           Path()
             ..moveTo(5, 6)
@@ -132,35 +144,33 @@ class _LucidePainter extends CustomPainter {
         break;
 
       case LapisIconName.receipt:
-        canvas.drawPath(
-          Path()
-            ..moveTo(4, 3)
-            ..lineTo(20, 3)
-            ..lineTo(20, 21)
-            ..lineTo(17, 19)
-            ..lineTo(14, 21)
-            ..lineTo(12, 19)
-            ..lineTo(10, 21)
-            ..lineTo(7, 19)
-            ..lineTo(4, 21)
-            ..close(),
-          p,
-        );
+        final path = Path()
+          ..moveTo(4, 3)
+          ..lineTo(20, 3)
+          ..lineTo(20, 21)
+          ..lineTo(17, 19)
+          ..lineTo(14, 21)
+          ..lineTo(12, 19)
+          ..lineTo(10, 21)
+          ..lineTo(7, 19)
+          ..lineTo(4, 21)
+          ..close();
+        if (filled) canvas.drawPath(path, softFill);
+        canvas.drawPath(path, p);
         canvas.drawLine(const Offset(8, 8), const Offset(16, 8), p);
         canvas.drawLine(const Offset(8, 12), const Offset(16, 12), p);
         canvas.drawLine(const Offset(8, 16), const Offset(12, 16), p);
         break;
 
       case LapisIconName.bell:
-        canvas.drawPath(
-          Path()
-            ..moveTo(6, 8)
-            ..arcToPoint(const Offset(18, 8), radius: const Radius.circular(6))
-            ..cubicTo(18, 14.5, 20, 16, 21, 17)
-            ..lineTo(3, 17)
-            ..cubicTo(4, 16, 6, 14.5, 6, 8),
-          p,
-        );
+        final path = Path()
+          ..moveTo(6, 8)
+          ..arcToPoint(const Offset(18, 8), radius: const Radius.circular(6))
+          ..cubicTo(18, 14.5, 20, 16, 21, 17)
+          ..lineTo(3, 17)
+          ..cubicTo(4, 16, 6, 14.5, 6, 8);
+        if (filled) canvas.drawPath(path, softFill);
+        canvas.drawPath(path, p);
         canvas.drawPath(
           Path()
             ..moveTo(10.3, 21)
@@ -170,6 +180,7 @@ class _LucidePainter extends CustomPainter {
         break;
 
       case LapisIconName.user:
+        if (filled) canvas.drawCircle(const Offset(12, 8), 4, softFill);
         canvas.drawCircle(const Offset(12, 8), 4, p);
         canvas.drawPath(
           Path()
@@ -179,48 +190,141 @@ class _LucidePainter extends CustomPainter {
         );
         break;
 
+      case LapisIconName.users:
+        if (filled) canvas.drawCircle(const Offset(9, 8.5), 3.3, softFill);
+        canvas.drawCircle(const Offset(9, 8.5), 3.3, p);
+        canvas.drawPath(
+          Path()
+            ..moveTo(3, 20)
+            ..arcToPoint(const Offset(15, 20), radius: const Radius.circular(6)),
+          p,
+        );
+        canvas.drawArc(const Rect.fromLTWH(13.5, 5.5, 5.5, 6), -math.pi * 0.45, math.pi * 0.9, false, p);
+        canvas.drawPath(
+          Path()
+            ..moveTo(16.5, 14.5)
+            ..quadraticBezierTo(20.5, 15.2, 21, 20),
+          p,
+        );
+        break;
+
       case LapisIconName.home:
-        canvas.drawPath(
-          Path()
-            ..moveTo(3, 10.5)
-            ..lineTo(12, 3)
-            ..lineTo(21, 10.5)
-            ..lineTo(21, 20)
-            ..quadraticBezierTo(21, 21, 20, 21)
-            ..lineTo(4, 21)
-            ..quadraticBezierTo(3, 21, 3, 20)
-            ..close(),
-          p,
-        );
-        canvas.drawPath(
-          Path()
-            ..moveTo(9, 21)
-            ..lineTo(9, 13)
-            ..lineTo(15, 13)
-            ..lineTo(15, 21),
-          p,
-        );
+        final house = Path()
+          ..moveTo(3, 10.5)
+          ..lineTo(12, 3)
+          ..lineTo(21, 10.5)
+          ..lineTo(21, 20)
+          ..quadraticBezierTo(21, 21, 20, 21)
+          ..lineTo(4, 21)
+          ..quadraticBezierTo(3, 21, 3, 20)
+          ..close();
+        if (filled) {
+          canvas.drawPath(house, fill);
+          final cut = Paint()
+            ..color = Colors.white
+            ..style = PaintingStyle.fill;
+          canvas.drawRRect(
+            RRect.fromRectAndCorners(
+              const Rect.fromLTWH(9.3, 13.2, 5.4, 7.8),
+              topLeft: const Radius.circular(1.4),
+              topRight: const Radius.circular(1.4),
+            ),
+            cut,
+          );
+        } else {
+          canvas.drawPath(house, p);
+          canvas.drawPath(
+            Path()
+              ..moveTo(9, 21)
+              ..lineTo(9, 13)
+              ..lineTo(15, 13)
+              ..lineTo(15, 21),
+            p,
+          );
+        }
         break;
 
       case LapisIconName.creditCard:
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(const Rect.fromLTWH(2.5, 5, 19, 14), const Radius.circular(2.5)),
-          p,
-        );
-        canvas.drawLine(const Offset(2.5, 10), const Offset(21.5, 10), p);
-        canvas.drawLine(const Offset(6, 15), const Offset(10, 15), p);
+        final rr = RRect.fromRectAndRadius(const Rect.fromLTWH(2.5, 5, 19, 14), const Radius.circular(2.5));
+        if (filled) {
+          canvas.drawRRect(rr, fill);
+          final cut = Paint()
+            ..color = Colors.white
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.0
+            ..strokeCap = StrokeCap.round;
+          canvas.drawLine(const Offset(2.5, 10), const Offset(21.5, 10), cut);
+          canvas.drawLine(const Offset(6, 15), const Offset(10.5, 15), cut);
+        } else {
+          canvas.drawRRect(rr, p);
+          canvas.drawLine(const Offset(2.5, 10), const Offset(21.5, 10), p);
+          canvas.drawLine(const Offset(6, 15), const Offset(10, 15), p);
+        }
         break;
 
       case LapisIconName.wrench:
-        canvas.drawPath(
-          Path()
-            ..moveTo(14.7, 6.3)
-            ..arcToPoint(const Offset(17.7, 9.3), radius: const Radius.circular(4.2), largeArc: true, clockwise: false)
-            ..lineTo(8.2, 18.8)
-            ..arcToPoint(const Offset(5.2, 15.8), radius: const Radius.circular(2.1))
-            ..close(),
-          p,
-        );
+        final path = Path()
+          ..moveTo(14.7, 6.3)
+          ..arcToPoint(const Offset(17.7, 9.3), radius: const Radius.circular(4.2), largeArc: true, clockwise: false)
+          ..lineTo(8.2, 18.8)
+          ..arcToPoint(const Offset(5.2, 15.8), radius: const Radius.circular(2.1))
+          ..close();
+        if (filled) {
+          canvas.drawPath(path, fill);
+        } else {
+          canvas.drawPath(path, p);
+        }
+        break;
+
+      case LapisIconName.settings:
+        if (filled) {
+          canvas.drawCircle(const Offset(12, 12), 7.5, fill);
+          for (int i = 0; i < 8; i++) {
+            final angle = i * math.pi / 4;
+            final x1 = 12 + 7.0 * math.cos(angle);
+            final y1 = 12 + 7.0 * math.sin(angle);
+            final x2 = 12 + 9.6 * math.cos(angle);
+            final y2 = 12 + 9.6 * math.sin(angle);
+            canvas.drawLine(Offset(x1, y1), Offset(x2, y2), p..strokeWidth = 2.6);
+          }
+          canvas.drawCircle(const Offset(12, 12), 3.0, Paint()..color = Colors.white);
+        } else {
+          canvas.drawCircle(const Offset(12, 12), 3.0, p);
+          canvas.drawCircle(const Offset(12, 12), 7.2, p);
+          for (int i = 0; i < 8; i++) {
+            final angle = i * math.pi / 4;
+            final x1 = 12 + 7.4 * math.cos(angle);
+            final y1 = 12 + 7.4 * math.sin(angle);
+            final x2 = 12 + 9.5 * math.cos(angle);
+            final y2 = 12 + 9.5 * math.sin(angle);
+            canvas.drawLine(Offset(x1, y1), Offset(x2, y2), p);
+          }
+        }
+        break;
+
+      case LapisIconName.layers:
+        final top = Path()
+          ..moveTo(12, 3)
+          ..lineTo(21, 7.8)
+          ..lineTo(12, 12.6)
+          ..lineTo(3, 7.8)
+          ..close();
+        if (filled) canvas.drawPath(top, fill);
+        canvas.drawPath(top, p);
+        canvas.drawPath(Path()..moveTo(3, 12.5)..lineTo(12, 17.2)..lineTo(21, 12.5), p);
+        canvas.drawPath(Path()..moveTo(3, 16.8)..lineTo(12, 21.3)..lineTo(21, 16.8), p);
+        break;
+
+      case LapisIconName.search:
+        canvas.drawCircle(const Offset(11, 11), 6.5, p);
+        canvas.drawLine(const Offset(16, 16), const Offset(20.5, 20.5), p);
+        break;
+
+      case LapisIconName.arrowLeftRight:
+        canvas.drawLine(const Offset(4, 8.5), const Offset(20, 8.5), p);
+        canvas.drawPath(Path()..moveTo(16, 4.8)..lineTo(20, 8.5)..lineTo(16, 12.2), p);
+        canvas.drawLine(const Offset(20, 15.5), const Offset(4, 15.5), p);
+        canvas.drawPath(Path()..moveTo(8, 11.8)..lineTo(4, 15.5)..lineTo(8, 19.2), p);
         break;
 
       case LapisIconName.plus:
@@ -249,6 +353,7 @@ class _LucidePainter extends CustomPainter {
         break;
 
       case LapisIconName.checkCircle:
+        if (filled) canvas.drawCircle(const Offset(12, 12), 9, softFill);
         canvas.drawCircle(const Offset(12, 12), 9, p);
         canvas.drawPath(Path()..moveTo(8.5, 12.2)..lineTo(11, 14.8)..lineTo(15.8, 9.5), p);
         break;
@@ -286,47 +391,67 @@ class _LucidePainter extends CustomPainter {
         break;
 
       case LapisIconName.shieldCheck:
-        canvas.drawPath(
-          Path()
-            ..moveTo(12, 2.5)
-            ..lineTo(19.5, 5.8)
-            ..lineTo(19.5, 11.5)
-            ..cubicTo(19.5, 16.5, 16.2, 19.8, 12, 21.5)
-            ..cubicTo(7.8, 19.8, 4.5, 16.5, 4.5, 11.5)
-            ..lineTo(4.5, 5.8)
-            ..close(),
-          p,
-        );
+        final shield = Path()
+          ..moveTo(12, 2.5)
+          ..lineTo(19.5, 5.8)
+          ..lineTo(19.5, 11.5)
+          ..cubicTo(19.5, 16.5, 16.2, 19.8, 12, 21.5)
+          ..cubicTo(7.8, 19.8, 4.5, 16.5, 4.5, 11.5)
+          ..lineTo(4.5, 5.8)
+          ..close();
+        if (filled) canvas.drawPath(shield, softFill);
+        canvas.drawPath(shield, p);
         canvas.drawPath(Path()..moveTo(9, 12.2)..lineTo(11.2, 14.4)..lineTo(15.5, 9.8), p);
         break;
 
       case LapisIconName.building:
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(const Rect.fromLTWH(4, 3, 16, 18), const Radius.circular(2)),
-          p,
-        );
-        canvas.drawLine(const Offset(9, 7), const Offset(9.01, 7), p..strokeWidth = 2.2);
-        canvas.drawLine(const Offset(15, 7), const Offset(15.01, 7), p..strokeWidth = 2.2);
-        canvas.drawLine(const Offset(9, 11.5), const Offset(9.01, 11.5), p..strokeWidth = 2.2);
-        canvas.drawLine(const Offset(15, 11.5), const Offset(15.01, 11.5), p..strokeWidth = 2.2);
-        p.strokeWidth = strokeWidth;
-        canvas.drawPath(Path()..moveTo(9.5, 21)..lineTo(9.5, 16.5)..lineTo(14.5, 16.5)..lineTo(14.5, 21), p);
+        final rr = RRect.fromRectAndRadius(const Rect.fromLTWH(4, 3, 16, 18), const Radius.circular(2));
+        if (filled) {
+          canvas.drawRRect(rr, fill);
+          final cut = Paint()
+            ..color = Colors.white
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.1
+            ..strokeCap = StrokeCap.round;
+          canvas.drawLine(const Offset(9, 7.5), const Offset(9.01, 7.5), cut);
+          canvas.drawLine(const Offset(15, 7.5), const Offset(15.01, 7.5), cut);
+          canvas.drawLine(const Offset(9, 12), const Offset(9.01, 12), cut);
+          canvas.drawLine(const Offset(15, 12), const Offset(15.01, 12), cut);
+          canvas.drawRect(const Rect.fromLTWH(9.6, 16.5, 4.8, 4.5), Paint()..color = Colors.white);
+        } else {
+          canvas.drawRRect(rr, p);
+          canvas.drawLine(const Offset(9, 7), const Offset(9.01, 7), p..strokeWidth = 2.2);
+          canvas.drawLine(const Offset(15, 7), const Offset(15.01, 7), p..strokeWidth = 2.2);
+          canvas.drawLine(const Offset(9, 11.5), const Offset(9.01, 11.5), p..strokeWidth = 2.2);
+          canvas.drawLine(const Offset(15, 11.5), const Offset(15.01, 11.5), p..strokeWidth = 2.2);
+          p.strokeWidth = strokeWidth;
+          canvas.drawPath(Path()..moveTo(9.5, 21)..lineTo(9.5, 16.5)..lineTo(14.5, 16.5)..lineTo(14.5, 21), p);
+        }
         break;
 
       case LapisIconName.fileText:
-        canvas.drawPath(
-          Path()
-            ..moveTo(6, 3)
-            ..lineTo(14, 3)
-            ..lineTo(19, 8)
-            ..lineTo(19, 21)
-            ..lineTo(6, 21)
-            ..close(),
-          p,
-        );
-        canvas.drawPath(Path()..moveTo(14, 3)..lineTo(14, 8)..lineTo(19, 8), p);
-        canvas.drawLine(const Offset(9, 12.5), const Offset(15.5, 12.5), p);
-        canvas.drawLine(const Offset(9, 16), const Offset(15.5, 16), p);
+        final doc = Path()
+          ..moveTo(6, 3)
+          ..lineTo(14, 3)
+          ..lineTo(19, 8)
+          ..lineTo(19, 21)
+          ..lineTo(6, 21)
+          ..close();
+        if (filled) {
+          canvas.drawPath(doc, fill);
+          final cut = Paint()
+            ..color = Colors.white
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.8
+            ..strokeCap = StrokeCap.round;
+          canvas.drawLine(const Offset(9.2, 12.5), const Offset(15.5, 12.5), cut);
+          canvas.drawLine(const Offset(9.2, 16), const Offset(14.0, 16), cut);
+        } else {
+          canvas.drawPath(doc, p);
+          canvas.drawPath(Path()..moveTo(14, 3)..lineTo(14, 8)..lineTo(19, 8), p);
+          canvas.drawLine(const Offset(9, 12.5), const Offset(15.5, 12.5), p);
+          canvas.drawLine(const Offset(9, 16), const Offset(15.5, 16), p);
+        }
         break;
 
       case LapisIconName.logOut:
@@ -436,5 +561,6 @@ class _LucidePainter extends CustomPainter {
   bool shouldRepaint(covariant _LucidePainter oldDelegate) =>
       oldDelegate.name != name ||
       oldDelegate.color != color ||
-      oldDelegate.strokeWidth != strokeWidth;
+      oldDelegate.strokeWidth != strokeWidth ||
+      oldDelegate.filled != filled;
 }

@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:smart_auth/smart_auth.dart';
 import 'theme.dart';
 import 'models.dart';
 import 'icons.dart';
@@ -122,7 +124,7 @@ class ErrorStateCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              Text('Unable to Load Data', style: flex(14, color: C.textPrimary)),
+              Text('Connection issue', style: flex(14, color: C.textPrimary)),
               const SizedBox(height: 4),
               Text(
                 message,
@@ -135,7 +137,7 @@ class ErrorStateCard extends StatelessWidget {
                 child: ElevatedButton.icon(
                   onPressed: onRetry,
                   icon: const LapisIcon(LapisIconName.refresh, size: 14, color: C.ctaOn),
-                  label: Text('Try Again', style: sans(12, color: C.ctaOn, weight: FontWeight.w600)),
+                  label: Text('Retry', style: sans(12, color: C.ctaOn, weight: FontWeight.w600)),
                 ),
               ),
             ],
@@ -219,6 +221,202 @@ class _KenyaPhoneFieldState extends State<KenyaPhoneField> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 6-Box Segmented OTP Input with automatic Android SMS OTP Detection (Google SMS User Consent API + Autofill)
+class OtpCodeInput extends StatefulWidget {
+  final TextEditingController controller;
+  final int length;
+  final bool autoFocus;
+  final bool autoListenSms;
+  final ValueChanged<String>? onChanged;
+  final ValueChanged<String>? onCompleted;
+
+  const OtpCodeInput({
+    super.key,
+    required this.controller,
+    this.length = 6,
+    this.autoFocus = true,
+    this.autoListenSms = true,
+    this.onChanged,
+    this.onCompleted,
+  });
+
+  @override
+  State<OtpCodeInput> createState() => _OtpCodeInputState();
+}
+
+class _OtpCodeInputState extends State<OtpCodeInput> {
+  final FocusNode _focusNode = FocusNode();
+  bool _isListeningSms = false;
+  bool _smsAutoFilled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onTextChange);
+    _focusNode.addListener(() {
+      if (mounted) setState(() {});
+    });
+    if (widget.autoListenSms) {
+      _startSmsDetection();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onTextChange);
+    _focusNode.dispose();
+    if (_isListeningSms) {
+      try {
+        SmartAuth.instance.removeUserConsentApiListener();
+      } catch (_) {}
+    }
+    super.dispose();
+  }
+
+  void _onTextChange() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _startSmsDetection() async {
+    bool isAndroid = false;
+    try {
+      isAndroid = Platform.isAndroid;
+    } catch (_) {
+      return;
+    }
+    if (!isAndroid) return;
+
+    try {
+      setState(() => _isListeningSms = true);
+      final res = await SmartAuth.instance.getSmsWithUserConsentApi(
+        matcher: r'\d{6}',
+      );
+      if (!mounted) return;
+      setState(() => _isListeningSms = false);
+      if (res.hasData && res.data?.code != null && res.data!.code!.length == widget.length) {
+        final code = res.data!.code!;
+        widget.controller.text = code;
+        widget.controller.selection = TextSelection.collapsed(offset: code.length);
+        setState(() => _smsAutoFilled = true);
+        widget.onChanged?.call(code);
+        widget.onCompleted?.call(code);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _isListeningSms = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = widget.controller.text;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        GestureDetector(
+          onTap: () => _focusNode.requestFocus(),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // Hidden native TextField supporting paste, keyboard autofillHints.oneTimeCode, and backspace
+              Opacity(
+                opacity: 0.0,
+                child: SizedBox(
+                  height: 52,
+                  child: TextField(
+                    controller: widget.controller,
+                    focusNode: _focusNode,
+                    autofocus: widget.autoFocus,
+                    keyboardType: TextInputType.number,
+                    autofillHints: const [AutofillHints.oneTimeCode],
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(widget.length),
+                    ],
+                    onChanged: (val) {
+                      widget.onChanged?.call(val);
+                      if (val.length == widget.length) {
+                        widget.onCompleted?.call(val);
+                      }
+                    },
+                  ),
+                ),
+              ),
+              // 6 Crisp Rounded OTP Boxes
+              IgnorePointer(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: List.generate(widget.length, (i) {
+                    final char = i < text.length ? text[i] : '';
+                    final isCurrent = _focusNode.hasFocus &&
+                        (i == text.length || (text.length == widget.length && i == widget.length - 1));
+                    final isFilled = char.isNotEmpty;
+
+                    return Expanded(
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 140),
+                        height: 52,
+                        margin: EdgeInsets.only(right: i == widget.length - 1 ? 0 : 8),
+                        decoration: BoxDecoration(
+                          color: isFilled ? C.surface : C.canvas,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: isCurrent
+                                ? C.navy
+                                : (isFilled ? C.navy.withValues(alpha: 0.35) : C.border),
+                            width: isCurrent ? 1.8 : 1.1,
+                          ),
+                          boxShadow: isCurrent
+                              ? [
+                                  BoxShadow(
+                                    color: C.navy.withValues(alpha: 0.08),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ]
+                              : null,
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          char,
+                          style: mono(20, color: C.navy, weight: FontWeight.w700),
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_smsAutoFilled) ...[
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const LapisIcon(LapisIconName.checkCircle, size: 12, color: C.mintText),
+              const SizedBox(width: 5),
+              Text('SMS code auto-filled', style: sans(11, color: C.mintText, weight: FontWeight.w600)),
+            ],
+          ),
+        ] else if (_isListeningSms) ...[
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const LapisIcon(LapisIconName.smartphone, size: 12, color: C.textMuted),
+              const SizedBox(width: 5),
+              Text('Auto-detecting SMS code...', style: sans(11, color: C.textMuted)),
+            ],
+          ),
+        ],
+      ],
     );
   }
 }
@@ -320,14 +518,18 @@ class StatusPill extends StatelessWidget {
   }
 }
 
-/// Executive Portfolio Hero Card (Lapis Navy)
+/// Executive Portfolio Hero Card (Lapis Navy + Tabular Precision + Collection Progress Bar)
 class OrbixOverviewCard extends StatelessWidget {
   final String title;
   final String period;
   final String heroLabel;
   final String heroValue;
+  final String? heroPrefix;
   final List<MetricItem> metrics;
   final Widget? extraAction;
+  final double? collectionProgress;
+  final int? collectedAmount;
+  final int? expectedAmount;
 
   const OrbixOverviewCard({
     super.key,
@@ -335,28 +537,34 @@ class OrbixOverviewCard extends StatelessWidget {
     required this.period,
     required this.heroLabel,
     required this.heroValue,
+    this.heroPrefix,
     required this.metrics,
     this.extraAction,
+    this.collectionProgress,
+    this.collectedAmount,
+    this.expectedAmount,
   });
 
   @override
   Widget build(BuildContext context) {
+    final pct = ((collectionProgress ?? 0) * 100).round();
+
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 6),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [C.navy, C.navyHover],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: C.navyBorder),
         boxShadow: [
           BoxShadow(
             color: C.navy.withValues(alpha: 0.14),
-            blurRadius: 14,
-            offset: const Offset(0, 4),
+            blurRadius: 16,
+            offset: const Offset(0, 5),
           ),
         ],
       ),
@@ -371,9 +579,9 @@ class OrbixOverviewCard extends StatelessWidget {
                   Text(title, style: flex(12.5, color: Colors.white, weight: FontWeight.w700)),
                   const SizedBox(width: 6),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                     decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.08),
+                      color: Colors.white.withValues(alpha: 0.09),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
@@ -386,21 +594,39 @@ class OrbixOverviewCard extends StatelessWidget {
               ?extraAction,
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           Text(
             heroLabel.toUpperCase(),
-            style: sans(9.5, color: const Color(0xFF94A3B8), weight: FontWeight.w600, letterSpacing: 0.6),
+            style: sans(9.5, color: const Color(0xFF94A3B8), weight: FontWeight.w600, letterSpacing: 0.65),
           ),
-          const SizedBox(height: 3),
-          Text(
-            heroValue,
-            style: flex(
-              20,
-              color: Colors.white,
-              weight: FontWeight.w700,
-              letterSpacing: -0.4,
-              fontFeatures: kTabularNums,
-            ),
+          const SizedBox(height: 4),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              if (heroPrefix != null) ...[
+                Text(
+                  heroPrefix!,
+                  style: sans(
+                    12.5,
+                    color: Colors.white.withValues(alpha: 0.65),
+                    weight: FontWeight.w500,
+                    fontFeatures: kTabularNums,
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                heroValue,
+                style: flex(
+                  24,
+                  color: Colors.white,
+                  weight: FontWeight.w700,
+                  letterSpacing: -0.5,
+                  fontFeatures: kTabularNums,
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 14),
           Container(height: 1, color: Colors.white.withValues(alpha: 0.1)),
@@ -408,6 +634,7 @@ class OrbixOverviewCard extends StatelessWidget {
           Row(
             children: metrics.map((m) {
               return Expanded(
+                flex: m.flex,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -416,17 +643,74 @@ class OrbixOverviewCard extends StatelessWidget {
                       style: sans(10, color: const Color(0xFF94A3B8), weight: FontWeight.w500),
                     ),
                     const SizedBox(height: 2),
-                    Text(
-                      m.value,
-                      style: flex(12, color: Colors.white, weight: FontWeight.w700, fontFeatures: kTabularNums),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        if (m.prefix != null) ...[
+                          Text(
+                            m.prefix!,
+                            style: sans(
+                              9,
+                              color: Colors.white.withValues(alpha: 0.6),
+                              weight: FontWeight.w500,
+                              fontFeatures: kTabularNums,
+                            ),
+                          ),
+                          const SizedBox(width: 3),
+                        ],
+                        Flexible(
+                          child: Text(
+                            m.value,
+                            style: flex(12, color: Colors.white, weight: FontWeight.w700, fontFeatures: kTabularNums),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
               );
             }).toList(),
           ),
+          if (collectionProgress != null && expectedAmount != null) ...[
+            const SizedBox(height: 14),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Collected KES ${(collectedAmount ?? 0).toLocaleString()} of KES ${expectedAmount!.toLocaleString()}',
+                  style: sans(
+                    10.5,
+                    color: Colors.white.withValues(alpha: 0.72),
+                    weight: FontWeight.w500,
+                    fontFeatures: kTabularNums,
+                  ),
+                ),
+                Text(
+                  '$pct%',
+                  style: sans(
+                    10.5,
+                    color: const Color(0xFF34D399),
+                    weight: FontWeight.w700,
+                    fontFeatures: kTabularNums,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(99),
+              child: LinearProgressIndicator(
+                value: collectionProgress!.clamp(0.0, 1.0),
+                minHeight: 5,
+                backgroundColor: Colors.white.withValues(alpha: 0.12),
+                valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF10B981)),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -436,17 +720,21 @@ class OrbixOverviewCard extends StatelessWidget {
 class MetricItem {
   final String label;
   final String value;
-  const MetricItem(this.label, this.value);
+  final String? prefix;
+  final int flex;
+  const MetricItem(this.label, this.value, {this.prefix, this.flex = 1});
 }
 
 /// Compact, fintech-grade card-row list tile using Lucide SVG vector icons (zero `▯` glyphs)
 class OrbixListTile extends StatelessWidget {
-  final LapisIconName icon;
+  final LapisIconName? icon;
   final Color? iconColor;
   final Color? iconBg;
   final bool circularIcon;
+  final Widget? leadingOverride;
   final String title;
-  final String subtitle;
+  final String? subtitle;
+  final Widget? subtitleWidget;
   final String amount;
   final String? amountPrefix;
   final Color? amountColor;
@@ -456,12 +744,14 @@ class OrbixListTile extends StatelessWidget {
 
   const OrbixListTile({
     super.key,
-    required this.icon,
+    this.icon,
     this.iconColor,
     this.iconBg,
     this.circularIcon = false,
+    this.leadingOverride,
     required this.title,
-    required this.subtitle,
+    this.subtitle,
+    this.subtitleWidget,
     required this.amount,
     this.amountPrefix,
     this.amountColor,
@@ -490,20 +780,25 @@ class OrbixListTile extends StatelessWidget {
             ),
             child: Row(
               children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: iconBg ?? C.cardSubtle,
-                    shape: circularIcon ? BoxShape.circle : BoxShape.rectangle,
-                    borderRadius: circularIcon ? null : BorderRadius.circular(9),
-                    border: circularIcon ? null : Border.all(color: C.borderLight),
+                if (leadingOverride != null) ...[
+                  leadingOverride!,
+                  const SizedBox(width: 11),
+                ] else if (icon != null) ...[
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: iconBg ?? C.cardSubtle,
+                      shape: circularIcon ? BoxShape.circle : BoxShape.rectangle,
+                      borderRadius: circularIcon ? null : BorderRadius.circular(10),
+                      border: circularIcon ? null : Border.all(color: C.borderLight),
+                    ),
+                    child: Center(
+                      child: LapisIcon(icon!, size: 16, color: iconColor ?? C.textSecondary),
+                    ),
                   ),
-                  child: Center(
-                    child: LapisIcon(icon, size: 15, color: iconColor ?? C.textSecondary),
-                  ),
-                ),
-                const SizedBox(width: 11),
+                  const SizedBox(width: 11),
+                ],
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -512,60 +807,67 @@ class OrbixListTile extends StatelessWidget {
                         title,
                         style: isMonoTitle
                             ? mono(12, color: C.textPrimary, weight: FontWeight.w600, letterSpacing: 0.35)
-                            : sans(12.5, color: C.textPrimary, weight: FontWeight.w600),
+                            : sans(13, color: C.textPrimary, weight: FontWeight.w600),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle,
-                        style: sans(11, color: C.textMuted, fontFeatures: kTabularNums),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      if (subtitleWidget != null) ...[
+                        const SizedBox(height: 3),
+                        subtitleWidget!,
+                      ] else if (subtitle != null && subtitle!.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle!,
+                          style: sans(11.5, color: C.textMuted, fontFeatures: kTabularNums),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                     ],
                   ),
                 ),
-                const SizedBox(width: 10),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (amount.isNotEmpty)
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.baseline,
-                        textBaseline: TextBaseline.alphabetic,
-                        children: [
-                          if (amountPrefix != null) ...[
+                if (amount.isNotEmpty || status != null) ...[
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (amount.isNotEmpty)
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.baseline,
+                          textBaseline: TextBaseline.alphabetic,
+                          children: [
+                            if (amountPrefix != null) ...[
+                              Text(
+                                amountPrefix!,
+                                style: sans(
+                                  10,
+                                  color: C.textMuted.withValues(alpha: 0.8),
+                                  weight: FontWeight.w500,
+                                  fontFeatures: kTabularNums,
+                                ),
+                              ),
+                              const SizedBox(width: 3),
+                            ],
                             Text(
-                              amountPrefix!,
-                              style: sans(
-                                10,
-                                color: C.textMuted,
-                                weight: FontWeight.w500,
+                              amount,
+                              style: flex(
+                                13,
+                                color: amountColor ?? C.textPrimary,
+                                weight: FontWeight.w700,
                                 fontFeatures: kTabularNums,
                               ),
                             ),
-                            const SizedBox(width: 3),
                           ],
-                          Text(
-                            amount,
-                            style: flex(
-                              13,
-                              color: amountColor ?? C.textPrimary,
-                              weight: FontWeight.w700,
-                              fontFeatures: kTabularNums,
-                            ),
-                          ),
-                        ],
-                      ),
-                    if (status != null) ...[
-                      if (amount.isNotEmpty) const SizedBox(height: 4),
-                      status!,
+                        ),
+                      if (status != null) ...[
+                        if (amount.isNotEmpty) const SizedBox(height: 4),
+                        status!,
+                      ],
                     ],
-                  ],
-                ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -575,7 +877,7 @@ class OrbixListTile extends StatelessWidget {
   }
 }
 
-/// Clean Minimalist Bottom Navigation Bar (NO gray pill box behind active icon!)
+/// Clean Minimalist Bottom Navigation Bar — filled active icons, NO gray box highlight
 class OrbixBottomNav extends StatelessWidget {
   final int currentIndex;
   final ValueChanged<int> onTap;
@@ -598,7 +900,7 @@ class OrbixBottomNav extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 6),
+          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
           child: Row(
             children: items.asMap().entries.map((e) {
               final idx = e.key;
@@ -612,19 +914,22 @@ class OrbixBottomNav extends StatelessWidget {
                   borderRadius: BorderRadius.circular(10),
                   splashColor: C.navy.withValues(alpha: 0.05),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 9),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         LapisIcon(
                           item.icon,
-                          size: 19,
+                          size: 20,
                           color: color,
-                          strokeWidth: isSelected ? 2.1 : 1.75,
+                          strokeWidth: isSelected ? 2.0 : 1.7,
+                          filled: isSelected,
                         ),
                         const SizedBox(height: 4),
                         Text(
                           item.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: sans(
                             10.5,
                             color: color,

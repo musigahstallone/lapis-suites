@@ -1,10 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/services.dart';
 import '../core/theme.dart';
 import '../core/api.dart';
 import '../core/logo.dart';
+import '../core/icons.dart';
 import '../core/widgets.dart';
 import '../landlord/landlord.dart';
 import '../resident/resident.dart';
@@ -88,26 +87,26 @@ class _OtpVerificationPageState extends State<OtpVerificationPage> {
   String get _title {
     switch (widget.mode) {
       case OtpFlowMode.adminLogin:
-        return 'Admin Verification';
+        return 'Verify Sign In';
       case OtpFlowMode.registerOrClaim:
-        return 'Verify Your Phone';
+        return 'Verify Phone';
       case OtpFlowMode.passwordRecovery:
-        return 'Enter Reset Code';
+        return 'Reset Code';
     }
   }
 
-  /// Single clean instruction line (no duplicate OTP notices)
-  String get _singleSubtitle {
+  String get _subtitle {
     if (_maskedPhone != null && _maskedPhone!.isNotEmpty) {
-      return 'Enter the 6-digit SMS code sent to $_maskedPhone.';
+      return 'Code sent to $_maskedPhone';
     }
-    return 'Enter the 6-digit SMS code sent to your mobile number.';
+    return 'Enter the 6-digit SMS code';
   }
 
-  Future<void> _handleVerify() async {
-    final code = _codeCtrl.text.replaceAll(RegExp(r'\D'), '');
+  Future<void> _handleVerify([String? overrideCode]) async {
+    if (_isVerifying) return;
+    final code = (overrideCode ?? _codeCtrl.text).replaceAll(RegExp(r'\D'), '');
     if (code.length != 6) {
-      setState(() => _error = 'Enter all 6 digits from your SMS.');
+      setState(() => _error = 'Enter all 6 digits.');
       return;
     }
 
@@ -142,7 +141,7 @@ class _OtpVerificationPageState extends State<OtpVerificationPage> {
     setState(() => _isVerifying = false);
 
     if (res['success'] != true) {
-      setState(() => _error = res['error']?.toString() ?? 'Verification failed.');
+      setState(() => _error = res['error']?.toString() ?? 'Invalid code.');
       return;
     }
 
@@ -185,7 +184,7 @@ class _OtpVerificationPageState extends State<OtpVerificationPage> {
     } else {
       setState(() {
         _isResending = false;
-        _error = 'Go back and tap Send Code to request a fresh OTP.';
+        _error = 'Go back to request a fresh code.';
       });
       return;
     }
@@ -204,7 +203,7 @@ class _OtpVerificationPageState extends State<OtpVerificationPage> {
         _secondsRemaining = (res['expiresInSeconds'] as num?)?.toInt() ?? 600;
       });
       _startCountdown();
-      showAppSnackBar(context, 'New verification code sent.');
+      showAppSnackBar(context, 'New code sent.');
     } else {
       setState(() => _error = res['error']?.toString() ?? 'Could not resend code.');
     }
@@ -220,7 +219,7 @@ class _OtpVerificationPageState extends State<OtpVerificationPage> {
         backgroundColor: C.canvas,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(CupertinoIcons.chevron_back, size: 19, color: C.textPrimary),
+          icon: const LapisIcon(LapisIconName.chevronLeft, size: 19, color: C.textPrimary),
           onPressed: () => Navigator.pop(context),
         ),
       ),
@@ -230,11 +229,11 @@ class _OtpVerificationPageState extends State<OtpVerificationPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Align(alignment: Alignment.centerLeft, child: LapisLogo(size: 38)),
+              const Align(alignment: Alignment.centerLeft, child: LapisLogo(size: 36)),
               const SizedBox(height: 14),
-              Text(_title, style: flex(17.5, color: C.textPrimary)),
+              Text(_title, style: flex(18, color: C.textPrimary)),
               const SizedBox(height: 4),
-              Text(_singleSubtitle, style: sans(12.5, color: C.textMuted)),
+              Text(_subtitle, style: sans(12.5, color: C.textMuted)),
               const SizedBox(height: 18),
 
               Container(
@@ -255,7 +254,7 @@ class _OtpVerificationPageState extends State<OtpVerificationPage> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('6-Digit Code', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
+                        Text('OTP Code', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
                         Text(
                           _secondsRemaining > 0 ? _formattedTimer : 'Expired',
                           style: mono(
@@ -266,46 +265,41 @@ class _OtpVerificationPageState extends State<OtpVerificationPage> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
 
-                    TextField(
+                    // 6-Box Segmented OTP Input with automatic Android SMS detection
+                    OtpCodeInput(
                       controller: _codeCtrl,
-                      keyboardType: TextInputType.number,
-                      textAlign: TextAlign.center,
-                      autofocus: true,
-                      style: mono(20, color: C.navy, weight: FontWeight.w700, letterSpacing: 8),
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(6),
-                      ],
-                      onSubmitted: (_) => _handleVerify(),
-                      decoration: fieldDecoration(hintText: '••••••').copyWith(
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                      ),
+                      autoFocus: true,
+                      autoListenSms: true,
+                      onCompleted: (code) => _handleVerify(code),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 18),
 
                     SizedBox(
-                      height: 43,
+                      height: 46,
                       child: ElevatedButton(
-                        onPressed: _isVerifying ? null : _handleVerify,
+                        onPressed: _isVerifying ? null : () => _handleVerify(),
+                        style: ElevatedButton.styleFrom(
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
                         child: _isVerifying
                             ? const SizedBox(
                                 width: 17,
                                 height: 17,
                                 child: CircularProgressIndicator(strokeWidth: 2, color: C.ctaOn),
                               )
-                            : Text('Verify & Continue', style: sans(13, color: C.ctaOn, weight: FontWeight.w600)),
+                            : Text('Verify', style: sans(13, color: C.ctaOn, weight: FontWeight.w600)),
                       ),
                     ),
 
                     if (canResend) ...[
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 8),
                       Center(
                         child: TextButton(
                           onPressed: _isResending ? null : _handleResend,
                           child: Text(
-                            _isResending ? 'Sending...' : 'Resend SMS code',
+                            _isResending ? 'Sending...' : 'Resend code',
                             style: sans(12, color: C.navy, weight: FontWeight.w600),
                           ),
                         ),

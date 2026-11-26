@@ -1004,14 +1004,133 @@ class ApiService {
     }
   }
 
+  static Future<LeaseModel?> fetchLeaseById(String id) async {
+    if (id.isEmpty) return null;
+    try {
+      final res = await http
+          .get(Uri.parse('$baseUrl/api/leases/$id'), headers: _headers)
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode == 200) {
+        final data = _safeDecode(res);
+        if (data is Map<String, dynamic>) return LeaseModel.fromJson(data);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static Future<Map<String, dynamic>> amendLease(
+    String leaseId, {
+    String changeType = 'rent_adjustment',
+    String? effectiveDate,
+    int? newRent,
+    int? newDeposit,
+    String? newEndDate,
+    String? reason,
+    String? notes,
+  }) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$baseUrl/api/leases/$leaseId/amend'),
+            headers: _headers,
+            body: jsonEncode({
+              'changeType': changeType,
+              if (effectiveDate != null && effectiveDate.isNotEmpty) 'effectiveDate': effectiveDate,
+              if (newRent != null && newRent > 0) 'newRent': newRent,
+              if (newDeposit != null && newDeposit >= 0) 'newDeposit': newDeposit,
+              if (newEndDate != null && newEndDate.isNotEmpty) 'newEndDate': newEndDate,
+              'reason': (reason ?? '').trim().isNotEmpty ? reason!.trim() : 'Lease update',
+              if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+      final data = _safeDecode(res);
+      if (res.statusCode == 200) {
+        triggerRealtimeRefresh();
+        return {'success': true, 'data': data};
+      }
+      return {'success': false, 'error': _extractError(res, data, 'Could not update lease.')};
+    } catch (e) {
+      return {'success': false, 'error': friendlyError(e)};
+    }
+  }
+
+  static Future<Map<String, dynamic>> transferLease({
+    required String tenantId,
+    String? currentUnitId,
+    required String newUnitId,
+    required int newRent,
+    bool depositRollOver = true,
+    String? transferDate,
+    String? transferNotes,
+  }) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$baseUrl/api/leases/transfer'),
+            headers: _headers,
+            body: jsonEncode({
+              'tenantId': tenantId,
+              if (currentUnitId != null && currentUnitId.isNotEmpty) 'currentUnitId': currentUnitId,
+              'newUnitId': newUnitId,
+              'newRent': newRent,
+              'depositRollOver': depositRollOver,
+              if (transferDate != null && transferDate.isNotEmpty) 'transferDate': transferDate,
+              if (transferNotes != null && transferNotes.trim().isNotEmpty) 'transferNotes': transferNotes.trim(),
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+      final data = _safeDecode(res);
+      if (res.statusCode == 200) {
+        triggerRealtimeRefresh();
+        return {'success': true, 'data': data};
+      }
+      return {'success': false, 'error': _extractError(res, data, 'Could not transfer lease.')};
+    } catch (e) {
+      return {'success': false, 'error': friendlyError(e)};
+    }
+  }
+
+  static Future<Map<String, dynamic>> createTenant({
+    required String name,
+    required String email,
+    required String phone,
+    String? nationalId,
+  }) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$baseUrl/api/tenants'),
+            headers: _headers,
+            body: jsonEncode({
+              'name': name.trim(),
+              'email': email.trim().toLowerCase(),
+              'phone': toCanonicalKenyaPhone(phone),
+              if (nationalId != null && nationalId.trim().isNotEmpty) 'nationalId': nationalId.trim(),
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+      final data = _safeDecode(res);
+      if (res.statusCode == 201 || res.statusCode == 200) {
+        triggerRealtimeRefresh();
+        return {'success': true, 'tenant': data};
+      }
+      return {'success': false, 'error': _extractError(res, data, 'Could not add resident.')};
+    } catch (e) {
+      return {'success': false, 'error': friendlyError(e)};
+    }
+  }
+
   static Future<Map<String, dynamic>> updateTenant(
     String id, {
+    String? name,
     String? phone,
     String? email,
     String? nationalId,
   }) async {
     try {
       final body = <String, dynamic>{};
+      if (name != null && name.trim().isNotEmpty) body['name'] = name.trim();
       if (phone != null) body['phone'] = toCanonicalKenyaPhone(phone);
       if (email != null) body['email'] = email.trim().toLowerCase();
       if (nationalId != null) body['nationalId'] = nationalId.trim();
@@ -1029,6 +1148,22 @@ class ApiService {
         return {'success': true};
       }
       return {'success': false, 'error': _extractError(res, data, 'Could not update resident.')};
+    } catch (e) {
+      return {'success': false, 'error': friendlyError(e)};
+    }
+  }
+
+  static Future<Map<String, dynamic>> deleteTenant(String id) async {
+    try {
+      final res = await http
+          .delete(Uri.parse('$baseUrl/api/tenants/$id'), headers: _headers)
+          .timeout(const Duration(seconds: 10));
+      final data = _safeDecode(res);
+      if (res.statusCode == 200) {
+        triggerRealtimeRefresh();
+        return {'success': true};
+      }
+      return {'success': false, 'error': _extractError(res, data, 'Could not remove resident.')};
     } catch (e) {
       return {'success': false, 'error': friendlyError(e)};
     }
