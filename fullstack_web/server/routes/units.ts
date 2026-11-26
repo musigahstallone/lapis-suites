@@ -3,6 +3,7 @@ import { getDb } from '../db'
 import { generateHexObjectId } from '../config'
 import { authenticateToken, requireRole, AuthRequest } from '../middleware/auth'
 import { logServerEvent } from '../middleware/logger'
+import { logAuditEvent } from '../services/audit'
 
 const router = Router()
 
@@ -77,6 +78,13 @@ router.post('/units', authenticateToken, requireRole(['landlord']), async (req: 
     }
     await db.collection('units').insertOne(newUnit)
     logServerEvent('UNITS', `Created unit in MongoDB: ${cleanNumber} (${type})`)
+    await logAuditEvent({
+      actor: req.user,
+      action: 'unit.create',
+      entityType: 'unit',
+      entityId: newUnit.id,
+      summary: `Created unit ${cleanNumber} (${type})`
+    })
     res.status(201).json(newUnit)
   } catch (err: any) {
     res.status(500).json({ error: err.message })
@@ -147,6 +155,13 @@ router.delete('/units/:id', authenticateToken, requireRole(['landlord']), async 
 
     await db.collection('units').deleteOne({ id })
     logServerEvent('UNITS', `Deleted Unit ${unit.unitNumber} (${id}) from MongoDB`)
+    await logAuditEvent({
+      actor: req.user,
+      action: 'unit.delete',
+      entityType: 'unit',
+      entityId: id,
+      summary: `Deleted vacant unit ${unit.unitNumber}`
+    })
     res.json({ success: true, message: `Unit ${unit.unitNumber} deleted successfully.` })
   } catch (err: any) {
     res.status(500).json({ error: err.message })

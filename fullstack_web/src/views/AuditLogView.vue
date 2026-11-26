@@ -19,11 +19,24 @@ import {
   formatHumanDate,
   formatHumanDateTime,
   getTenantFinancialStanding,
-  fetchDashboard
+  fetchDashboard,
+  fetchAuditLogs,
+  type AuditLogEntry
 } from '../data'
 
+const activeTab = ref<'reflections' | 'system'>('reflections')
+const systemLogs = ref<AuditLogEntry[]>([])
+
+async function loadSystemLogs() {
+  try {
+    systemLogs.value = await fetchAuditLogs({ limit: 150 })
+  } catch {
+    systemLogs.value = []
+  }
+}
+
 onMounted(async () => {
-  await fetchDashboard()
+  await Promise.all([fetchDashboard(), loadSystemLogs()])
 })
 
 const isRefreshing = ref(false)
@@ -33,11 +46,23 @@ const searchQuery = ref('')
 async function refreshData() {
   isRefreshing.value = true
   try {
-    await fetchDashboard()
+    await Promise.all([fetchDashboard(), loadSystemLogs()])
   } finally {
     isRefreshing.value = false
   }
 }
+
+const filteredSystemLogs = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return systemLogs.value
+  return systemLogs.value.filter(entry =>
+    entry.summary.toLowerCase().includes(q) ||
+    entry.action.toLowerCase().includes(q) ||
+    entry.actorName.toLowerCase().includes(q) ||
+    entry.actorEmail.toLowerCase().includes(q) ||
+    entry.entityType.toLowerCase().includes(q)
+  )
+})
 
 // Compute dynamic, real-time audit reflections from the ledger
 interface AuditReflection {
@@ -207,33 +232,21 @@ const totalCreditInPortfolio = computed(() => {
       </article>
     </section>
 
-    <!-- Reflections Feed Panel -->
+    <!-- Reflections / System Audit Feed Panel -->
     <section class="structured-panel">
       <div class="panel-header-bar" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
         <div class="panel-filter-pills">
           <button
-            :class="['filter-pill', { active: filterType === 'all' }]"
-            @click="filterType = 'all'"
+            :class="['filter-pill', { active: activeTab === 'reflections' }]"
+            @click="activeTab = 'reflections'"
           >
-            All Reflections ({{ auditReflections.length }})
+            Ledger Reflections ({{ auditReflections.length }})
           </button>
           <button
-            :class="['filter-pill', { active: filterType === 'arrears' }]"
-            @click="filterType = 'arrears'"
+            :class="['filter-pill', { active: activeTab === 'system' }]"
+            @click="activeTab = 'system'"
           >
-            With Arrears / Debt
-          </button>
-          <button
-            :class="['filter-pill', { active: filterType === 'credit' }]"
-            @click="filterType = 'credit'"
-          >
-            Prepaid Advance Credit
-          </button>
-          <button
-            :class="['filter-pill', { active: filterType === 'deposit' }]"
-            @click="filterType = 'deposit'"
-          >
-            Security Deposit Allocations
+            Admin &amp; System Audit Log ({{ systemLogs.length }})
           </button>
         </div>
 
@@ -243,53 +256,98 @@ const totalCreditInPortfolio = computed(() => {
         </div>
       </div>
 
-      <!-- Feed of Narrative Reflections -->
-      <div v-if="filteredReflections.length > 0" style="display: flex; flex-direction: column; divide-y: 1px solid #f1f5f9;">
-        <div
-          v-for="item in filteredReflections"
-          :key="item.id"
-          style="padding: 16px 20px; border-bottom: 1px solid #f1f5f9; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; transition: background 0.15s ease;"
-        >
-          <!-- Left side: Narrative & Meta -->
-          <div style="flex: 1;">
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-              <span class="mono" style="font-size: 0.76rem; color: #64748b;">
-                {{ formatHumanDateTime(item.timestamp) }}
-              </span>
-              <span class="badge occupied" style="font-size: 0.70rem; padding: 2px 7px;">
-                Unit {{ item.unitNumber }}
-              </span>
-              <span class="mono" style="font-size: 0.74rem; font-weight: 600; color: #3b82f6;">
-                {{ item.reference }}
-              </span>
-            </div>
-
-            <p style="font-size: 0.88rem; color: #1e293b; margin: 0; line-height: 1.45; font-weight: 500;">
-              {{ item.narrative }}
-            </p>
-          </div>
-
-          <!-- Right side: Reflection Status Pill & Link -->
-          <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0;">
-            <span :class="['badge', item.badgeClass]" style="font-size: 0.76rem; padding: 4px 10px; font-weight: 600;">
-              ● {{ item.statusBadge }}
-            </span>
-            <router-link
-              v-if="item.tenantId"
-              :to="`/tenants/${item.tenantId}`"
-              class="text-button"
-              style="font-size: 0.76rem; color: #475569; display: inline-flex; align-items: center; gap: 3px;"
-            >
-              <span>Tenant Profile</span>
-              <ArrowRight :size="12" />
-            </router-link>
-          </div>
+      <div v-if="activeTab === 'reflections'" class="panel-header-bar" style="border-top: 1px solid #f1f5f9; padding-top: 10px; padding-bottom: 10px;">
+        <div class="panel-filter-pills">
+          <button :class="['filter-pill', { active: filterType === 'all' }]" @click="filterType = 'all'">All</button>
+          <button :class="['filter-pill', { active: filterType === 'arrears' }]" @click="filterType = 'arrears'">With Arrears</button>
+          <button :class="['filter-pill', { active: filterType === 'credit' }]" @click="filterType = 'credit'">Prepaid Credit</button>
+          <button :class="['filter-pill', { active: filterType === 'deposit' }]" @click="filterType = 'deposit'">Deposits</button>
         </div>
       </div>
 
-      <div v-else style="padding: 40px; text-align: center; color: #64748b;">
-        No ledger reflections matching the selected criteria.
-      </div>
+      <!-- Tab 1: Narrative Reflections -->
+      <template v-if="activeTab === 'reflections'">
+        <div v-if="filteredReflections.length > 0" style="display: flex; flex-direction: column;">
+          <div
+            v-for="item in filteredReflections"
+            :key="item.id"
+            style="padding: 16px 20px; border-bottom: 1px solid #f1f5f9; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; transition: background 0.15s ease;"
+          >
+            <!-- Left side: Narrative & Meta -->
+            <div style="flex: 1;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span class="mono" style="font-size: 0.76rem; color: #64748b;">
+                  {{ formatHumanDateTime(item.timestamp) }}
+                </span>
+                <span class="badge occupied" style="font-size: 0.70rem; padding: 2px 7px;">
+                  Unit {{ item.unitNumber }}
+                </span>
+                <span class="mono" style="font-size: 0.74rem; font-weight: 600; color: #3b82f6;">
+                  {{ item.reference }}
+                </span>
+              </div>
+
+              <p style="font-size: 0.88rem; color: #1e293b; margin: 0; line-height: 1.45; font-weight: 500;">
+                {{ item.narrative }}
+              </p>
+            </div>
+
+            <!-- Right side: Reflection Status Pill & Link -->
+            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0;">
+              <span :class="['badge', item.badgeClass]" style="font-size: 0.76rem; padding: 4px 10px; font-weight: 600;">
+                ● {{ item.statusBadge }}
+              </span>
+              <router-link
+                v-if="item.tenantId"
+                :to="`/tenants/${item.tenantId}`"
+                class="text-button"
+                style="font-size: 0.76rem; color: #475569; display: inline-flex; align-items: center; gap: 3px;"
+              >
+                <span>Tenant Profile</span>
+                <ArrowRight :size="12" />
+              </router-link>
+            </div>
+          </div>
+        </div>
+        <div v-else style="padding: 40px; text-align: center; color: #64748b;">
+          No ledger reflections matching the selected criteria.
+        </div>
+      </template>
+
+      <!-- Tab 2: Persistent Admin & System Audit Log -->
+      <template v-else>
+        <div v-if="filteredSystemLogs.length > 0" style="display: flex; flex-direction: column;">
+          <div
+            v-for="entry in filteredSystemLogs"
+            :key="entry.id"
+            style="padding: 14px 20px; border-bottom: 1px solid #f1f5f9; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;"
+          >
+            <div style="flex: 1;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap;">
+                <span class="mono" style="font-size: 0.75rem; color: #64748b;">
+                  {{ formatHumanDateTime(entry.timestamp) }}
+                </span>
+                <span class="badge occupied" style="font-size: 0.69rem; padding: 2px 7px; text-transform: uppercase;">
+                  {{ entry.entityType }}
+                </span>
+                <span class="mono" style="font-size: 0.73rem; font-weight: 600; color: #0f172a;">
+                  {{ entry.action }}
+                </span>
+              </div>
+              <p style="font-size: 0.87rem; color: #1e293b; margin: 0; line-height: 1.45; font-weight: 500;">
+                {{ entry.summary }}
+              </p>
+            </div>
+            <div style="text-align: right; flex-shrink: 0;">
+              <div style="font-size: 0.8rem; font-weight: 600; color: #0f172a;">{{ entry.actorName }}</div>
+              <div style="font-size: 0.72rem; color: #64748b;">{{ entry.actorEmail }}</div>
+            </div>
+          </div>
+        </div>
+        <div v-else style="padding: 40px; text-align: center; color: #64748b;">
+          No admin audit log entries recorded yet. Actions like payments, reconciliations, lease changes, and adjustments will appear here automatically.
+        </div>
+      </template>
     </section>
   </div>
 </template>

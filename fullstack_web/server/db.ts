@@ -76,6 +76,35 @@ async function ensureCollectionsAndIndexes(database: Db) {
     }
     await database.collection('settings').createIndex({ id: 1 }, { unique: true })
 
+    if (!collNames.includes('audit_logs')) {
+      await database.createCollection('audit_logs')
+    }
+    await database.collection('audit_logs').createIndex({ timestamp: -1 })
+    await database.collection('audit_logs').createIndex({ entityType: 1, timestamp: -1 })
+
+    if (!collNames.includes('ledger_adjustments')) {
+      await database.createCollection('ledger_adjustments')
+    }
+    await database.collection('ledger_adjustments').createIndex({ tenantId: 1, createdAt: -1 })
+    await database.collection('ledger_adjustments').createIndex({ leaseId: 1 })
+
+    // Core financial & operational indexes (idempotency + fast filtered queries)
+    try {
+      await database.collection('transactions').createIndex({ reference: 1 }, { unique: true, sparse: true })
+    } catch (idxErr: any) {
+      logServerEvent('DB', `transactions.reference unique index notice: ${idxErr.message}`)
+    }
+    await database.collection('transactions').createIndex({ tenantId: 1, date: -1 })
+    await database.collection('transactions').createIndex({ leaseId: 1, date: -1 })
+    await database.collection('transactions').createIndex({ status: 1, date: -1 })
+    await database.collection('leases').createIndex({ tenantId: 1, status: 1 })
+    await database.collection('leases').createIndex({ unitId: 1, status: 1 })
+    await database.collection('tenants').createIndex({ email: 1 }, { sparse: true })
+    await database.collection('tenants').createIndex({ id: 1 }, { sparse: true })
+    await database.collection('maintenance').createIndex({ tenantId: 1, createdAt: -1 })
+    await database.collection('notifications').createIndex({ tenantId: 1, timestamp: -1 })
+    await database.collection('notifications').createIndex({ role: 1, timestamp: -1 })
+
     // Strict 2-Admin Policy: Maximum 2 landlord/admin accounts, and each admin email
     // must include one of: musigah, stallone, odhiambo, or lapissuites.
     // Admin emails & OTP phone numbers are managed strictly in Settings (MongoDB), never .env.

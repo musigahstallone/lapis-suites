@@ -50,20 +50,30 @@ class LapisSuitesApp extends StatefulWidget {
   State<LapisSuitesApp> createState() => _LapisSuitesAppState();
 }
 
-class _LapisSuitesAppState extends State<LapisSuitesApp> {
+class _LapisSuitesAppState extends State<LapisSuitesApp> with WidgetsBindingObserver {
   StreamSubscription<Uri>? _linkSub;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     AppNotifications.init();
     _initDeepLinks();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _linkSub?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && ApiService.authToken != null) {
+      AppNotifications.checkNow();
+      ApiService.triggerRealtimeRefresh();
+    }
   }
 
   Future<void> _initDeepLinks() async {

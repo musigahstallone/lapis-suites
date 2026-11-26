@@ -25,6 +25,7 @@ import publicPayRoutes, { recordPaymentLinkClick } from './server/routes/publicP
 import settingsRoutes from './server/routes/settings'
 import dashboardRoutes from './server/routes/dashboard'
 import importRoutes from './server/routes/import'
+import auditRoutes from './server/services/audit'
 import { startReminderScheduler } from './server/services/reminders'
 
 // Recreate __dirname for ES modules
@@ -85,6 +86,7 @@ app.use('/api', publicPayRoutes)
 app.use('/api', settingsRoutes)
 app.use('/api', dashboardRoutes)
 app.use('/api', importRoutes)
+app.use('/api', auditRoutes)
 
 // Short tracked payment link redirect: records click immediately & routes to public OTP payment page
 app.get('/p/:linkId', async (req, res) => {

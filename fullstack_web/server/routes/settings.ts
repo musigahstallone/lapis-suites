@@ -11,6 +11,7 @@ import {
 import { authenticateToken, requireRole, AuthRequest } from '../middleware/auth'
 import { logServerEvent } from '../middleware/logger'
 import { getAppSettings, getAuthorizedAdminsFromDb } from '../services/settings'
+import { logAuditEvent } from '../services/audit'
 
 const router = Router()
 
@@ -59,6 +60,8 @@ router.put('/settings', authenticateToken, requireRole(['landlord']), async (req
         'contactPhone',
         'contactEmail',
         'paybillNumber',
+        'accountNumber',
+        'paybillRecipientName',
         'currency'
       ]
       for (const field of allowedStringFields) {
@@ -194,6 +197,14 @@ router.put('/settings', authenticateToken, requireRole(['landlord']), async (req
     const updatedAdmins = await getAuthorizedAdminsFromDb()
 
     logServerEvent('SETTINGS', `Saved property & billing settings (rentDueDay=${updatedSettings.rentDueDay}) by ${req.user?.email}`)
+    await logAuditEvent({
+      actor: req.user,
+      action: 'settings.update',
+      entityType: 'settings',
+      entityId: 'property_settings',
+      summary: `Updated property & billing settings (rentDueDay=${updatedSettings.rentDueDay})`,
+      meta: { paybillNumber: updatedSettings.paybillNumber, accountNumber: updatedSettings.accountNumber }
+    })
     res.json({
       ok: true,
       settings: updatedSettings,

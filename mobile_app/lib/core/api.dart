@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'models.dart';
@@ -41,6 +42,55 @@ class ApiService {
 
   static const String _tokenKey = 'lapis_auth_token';
   static const String _userKey = 'lapis_auth_user';
+  static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
+
+  static Future<void> _writeSecureToken(String token) async {
+    try {
+      await _secureStorage
+          .write(key: _tokenKey, value: token)
+          .timeout(const Duration(seconds: 2));
+      // Clean up legacy plaintext token if present
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_tokenKey);
+    } catch (_) {
+      // Fallback for unit tests / desktop environments without Keystore
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_tokenKey, token);
+      } catch (_) {}
+    }
+  }
+
+  static Future<String?> _readSecureToken() async {
+    try {
+      final secure = await _secureStorage
+          .read(key: _tokenKey)
+          .timeout(const Duration(seconds: 2));
+      if (secure != null && secure.isNotEmpty) return secure;
+    } catch (_) {}
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final legacy = prefs.getString(_tokenKey);
+      if (legacy != null && legacy.isNotEmpty) {
+        // Migrate legacy token into encrypted secure storage seamlessly
+        await _writeSecureToken(legacy);
+        return legacy;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static Future<void> _deleteSecureToken() async {
+    try {
+      await _secureStorage
+          .delete(key: _tokenKey)
+          .timeout(const Duration(seconds: 2));
+    } catch (_) {}
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_tokenKey);
+    } catch (_) {}
+  }
 
   /// Triggered automatically when an authenticated request gets HTTP 401
   static VoidCallback? onSessionExpired;
@@ -53,25 +103,25 @@ class ApiService {
     realtimeUpdateNotifier.value++;
   }
 
-  /// Persist JWT & user profile across app restarts (clears prior user's cached state first)
+  /// Persist JWT (encrypted) & user profile across app restarts (clears prior user's cached state first)
   static Future<void> _saveSession(String token, Map<String, dynamic> user) async {
     AppNotifications.resetForAccountSwitch();
     cachedSettings = const PropertySettingsModel();
     authToken = token;
     currentUser = user;
+    await _writeSecureToken(token);
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_tokenKey, token);
       await prefs.setString(_userKey, jsonEncode(user));
     } catch (_) {}
     AppNotifications.startPolling();
   }
 
-  /// Restore saved session on app launch (validates via /api/auth/me when online)
+  /// Restore saved session on app launch (silently refreshes 7-day JWT via /api/auth/refresh when online)
   static Future<bool> restoreSession() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final savedToken = prefs.getString(_tokenKey);
+      final savedToken = await _readSecureToken();
       final savedUserJson = prefs.getString(_userKey);
       if (savedToken == null || savedToken.isEmpty || savedUserJson == null) {
         return false;
@@ -80,20 +130,41 @@ class ApiService {
       authToken = savedToken;
       currentUser = Map<String, dynamic>.from(jsonDecode(savedUserJson));
 
-      // Verify token with server if reachable (keep cached session gracefully if offline)
+      // Sliding session refresh with server if reachable (keep cached session gracefully if offline)
       try {
-        final res = await http
-            .get(Uri.parse('$baseUrl/api/auth/me'), headers: _headers)
+        final refreshRes = await http
+            .post(Uri.parse('$baseUrl/api/auth/refresh'), headers: _headers)
             .timeout(const Duration(seconds: 6));
-        if (res.statusCode == 200) {
-          final data = _safeDecode(res);
-          if (data is Map<String, dynamic> && data['user'] is Map<String, dynamic>) {
-            currentUser = Map<String, dynamic>.from(data['user']);
-            await prefs.setString(_userKey, jsonEncode(currentUser));
+        if (refreshRes.statusCode == 200) {
+          final data = _safeDecode(refreshRes);
+          if (data is Map<String, dynamic>) {
+            if (data['token'] != null && data['token'].toString().isNotEmpty) {
+              authToken = data['token'].toString();
+              await _writeSecureToken(authToken!);
+            }
+            if (data['user'] is Map<String, dynamic>) {
+              currentUser = Map<String, dynamic>.from(data['user']);
+              await prefs.setString(_userKey, jsonEncode(currentUser));
+            }
           }
-        } else if (res.statusCode == 401 || res.statusCode == 403) {
+        } else if (refreshRes.statusCode == 401 || refreshRes.statusCode == 403) {
           await logout();
           return false;
+        } else {
+          // Fallback to /api/auth/me if server hasn't deployed /refresh yet
+          final meRes = await http
+              .get(Uri.parse('$baseUrl/api/auth/me'), headers: _headers)
+              .timeout(const Duration(seconds: 6));
+          if (meRes.statusCode == 200) {
+            final data = _safeDecode(meRes);
+            if (data is Map<String, dynamic> && data['user'] is Map<String, dynamic>) {
+              currentUser = Map<String, dynamic>.from(data['user']);
+              await prefs.setString(_userKey, jsonEncode(currentUser));
+            }
+          } else if (meRes.statusCode == 401 || meRes.statusCode == 403) {
+            await logout();
+            return false;
+          }
         }
       } catch (_) {
         // Offline — keep saved session so user isn't forced to re-login
@@ -577,11 +648,60 @@ class ApiService {
     currentUser = null;
     cachedSettings = const PropertySettingsModel();
     AppNotifications.resetForAccountSwitch();
+    await _deleteSecureToken();
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_tokenKey);
       await prefs.remove(_userKey);
     } catch (_) {}
+  }
+
+  /// Authenticated password change (bumps server tokenVersion & updates encrypted token)
+  static Future<Map<String, dynamic>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+    required String confirmPassword,
+  }) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$baseUrl/api/auth/change-password'),
+            headers: _headers,
+            body: jsonEncode({
+              'currentPassword': currentPassword,
+              'newPassword': newPassword,
+              'confirmPassword': confirmPassword,
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+      final data = _safeDecode(res);
+      if (res.statusCode == 200 && data is Map<String, dynamic>) {
+        if (data['token'] != null && data['token'].toString().isNotEmpty) {
+          authToken = data['token'].toString();
+          await _writeSecureToken(authToken!);
+        }
+        return {'success': true, 'message': data['message']?.toString() ?? 'Password updated.'};
+      }
+      return {'success': false, 'error': _extractError(res, data, 'Could not update password.')};
+    } catch (e) {
+      return {'success': false, 'error': friendlyError(e)};
+    }
+  }
+
+  /// Revoke all active sessions on every device for the logged-in user
+  static Future<Map<String, dynamic>> logoutAllDevices() async {
+    try {
+      final res = await http
+          .post(Uri.parse('$baseUrl/api/auth/logout-all'), headers: _headers)
+          .timeout(const Duration(seconds: 10));
+      final data = _safeDecode(res);
+      if (res.statusCode == 200) {
+        await logout();
+        return {'success': true};
+      }
+      return {'success': false, 'error': _extractError(res, data, 'Could not sign out all devices.')};
+    } catch (e) {
+      return {'success': false, 'error': friendlyError(e)};
+    }
   }
 
   // --- UNIT TYPES CRUD (With Occupied-Unit Integrity Guard) ---
@@ -1068,21 +1188,88 @@ class ApiService {
     }
   }
 
-  static Future<Map<String, dynamic>> terminateLease(String leaseId, {String? reason}) async {
+  static Future<Map<String, dynamic>> terminateLease(
+    String leaseId, {
+    String? reason,
+    int deductions = 0,
+    String? deductionNotes,
+  }) async {
     try {
       final res = await http
           .post(
             Uri.parse('$baseUrl/api/leases/$leaseId/terminate'),
             headers: _headers,
-            body: jsonEncode({'reason': reason ?? 'Normal lease conclusion'}),
+            body: jsonEncode({
+              'reason': reason ?? 'Normal lease conclusion',
+              'deductions': deductions,
+              if (deductionNotes != null && deductionNotes.trim().isNotEmpty)
+                'deductionNotes': deductionNotes.trim(),
+            }),
           )
           .timeout(const Duration(seconds: 10));
       final data = _safeDecode(res);
       if (res.statusCode == 200) {
         triggerRealtimeRefresh();
-        return {'success': true};
+        return {'success': true, 'moveOutSettlement': data is Map ? data['moveOutSettlement'] : null};
       }
       return {'success': false, 'error': _extractError(res, data, 'Failed to terminate lease.')};
+    } catch (e) {
+      return {'success': false, 'error': friendlyError(e)};
+    }
+  }
+
+  /// Single-request batch reconciliation across all residents (Landlord only)
+  static Future<Map<String, dynamic>> reconcileAllTenants() async {
+    try {
+      final res = await http
+          .post(Uri.parse('$baseUrl/api/tenants/reconcile-all'), headers: _headers)
+          .timeout(const Duration(seconds: 25));
+      final data = _safeDecode(res);
+      if (res.statusCode == 200 && data is Map<String, dynamic>) {
+        triggerRealtimeRefresh();
+        return {
+          'success': true,
+          'reconciledCount': data['reconciledCount'] ?? 0,
+          'totalArrears': data['totalArrears'] ?? 0,
+        };
+      }
+      return {'success': false, 'error': _extractError(res, data, 'Batch reconciliation failed.')};
+    } catch (e) {
+      return {'success': false, 'error': friendlyError(e)};
+    }
+  }
+
+  /// Post a manual ledger adjustment (extra charge or credit/waiver) for a resident
+  static Future<Map<String, dynamic>> createTenantAdjustment(
+    String tenantId, {
+    required String type,
+    required int amount,
+    required String category,
+    required String reason,
+    String? leaseId,
+    String? unitNumber,
+  }) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$baseUrl/api/tenants/$tenantId/adjustments'),
+            headers: _headers,
+            body: jsonEncode({
+              'type': type,
+              'amount': amount,
+              'category': category,
+              'reason': reason.trim(),
+              if (leaseId != null && leaseId.isNotEmpty) 'leaseId': leaseId,
+              if (unitNumber != null && unitNumber.isNotEmpty) 'unitNumber': unitNumber,
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+      final data = _safeDecode(res);
+      if (res.statusCode == 201 || res.statusCode == 200) {
+        triggerRealtimeRefresh();
+        return {'success': true, 'data': data};
+      }
+      return {'success': false, 'error': _extractError(res, data, 'Could not post adjustment.')};
     } catch (e) {
       return {'success': false, 'error': friendlyError(e)};
     }

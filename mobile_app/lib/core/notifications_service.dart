@@ -96,6 +96,9 @@ class AppNotifications {
     _seenIds.clear();
   }
 
+  /// Immediate non-FCM sync triggered whenever the app returns to the foreground
+  static Future<void> checkNow() => _checkServerNotifications();
+
   static Future<void> _checkServerNotifications() async {
     if (ApiService.authToken == null) return;
     try {

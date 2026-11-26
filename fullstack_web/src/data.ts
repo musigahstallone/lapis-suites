@@ -1803,6 +1803,119 @@ export async function runRentReminders(payload: { force?: boolean; tenantId?: st
   return data
 }
 
+export interface AuditLogEntry {
+  id: string
+  timestamp: string
+  actorId?: string | null
+  actorName: string
+  actorEmail: string
+  actorRole: string
+  action: string
+  entityType: string
+  entityId?: string | null
+  summary: string
+  meta?: Record<string, any>
+}
+
+export async function fetchAuditLogs(params: { limit?: number; entityType?: string; search?: string } = {}): Promise<AuditLogEntry[]> {
+  const token = store.session.token
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const qs = new URLSearchParams()
+  if (params.limit) qs.set('limit', String(params.limit))
+  if (params.entityType && params.entityType !== 'all') qs.set('entityType', params.entityType)
+  if (params.search) qs.set('search', params.search)
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+
+  const res = await fetch(`/api/audit-logs${suffix}`, { headers })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to load audit logs' }))
+    throw new Error(err.error || 'Failed to load audit logs')
+  }
+  return await res.json()
+}
+
+export async function changeMyPassword(payload: { currentPassword: string; newPassword: string; confirmPassword: string }) {
+  const token = store.session.token
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const res = await fetch('/api/auth/change-password', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload)
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Failed to update password')
+  if (data.token) {
+    store.session.token = data.token
+    try { localStorage.setItem('lapis_token', data.token) } catch {}
+  }
+  return data
+}
+
+export async function logoutAllDevices() {
+  const token = store.session.token
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const res = await fetch('/api/auth/logout-all', { method: 'POST', headers })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Failed to sign out of all devices')
+  return data
+}
+
+export async function reconcileAllTenants() {
+  const token = store.session.token
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const res = await fetch('/api/tenants/reconcile-all', { method: 'POST', headers })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Batch reconciliation failed')
+  await fetchDashboard()
+  return data
+}
+
+export interface LedgerAdjustment {
+  id: string
+  tenantId: string
+  tenantName?: string
+  leaseId?: string | null
+  unitNumber?: string
+  type: 'charge' | 'credit'
+  category: string
+  amount: number
+  reason: string
+  createdBy: string
+  createdAt: string
+}
+
+export async function fetchTenantAdjustments(tenantId: string): Promise<LedgerAdjustment[]> {
+  const token = store.session.token
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(`/api/tenants/${tenantId}/adjustments`, { headers })
+  if (!res.ok) throw new Error('Failed to load adjustments')
+  return await res.json()
+}
+
+export async function createTenantAdjustment(tenantId: string, payload: { type: 'charge' | 'credit'; amount: number; category?: string; reason: string; leaseId?: string }) {
+  const token = store.session.token
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(`/api/tenants/${tenantId}/adjustments`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload)
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Failed to save adjustment')
+  await fetchDashboard()
+  return data
+}
+
 
 
 

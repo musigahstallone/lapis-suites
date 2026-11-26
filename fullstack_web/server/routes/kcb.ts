@@ -499,99 +499,113 @@ async function finalizeSuccessfulKcbPayment(params: {
       rawCallback: params.rawPayload || null
     } as any
 
-    await db.collection('transactions').insertOne(ledgerTx as any)
-    logServerEvent('PAYMENT', `Ledger updated (${params.sourceLabel || 'callback'}): Reconciled KES ${amount.toLocaleString()} for Unit ${unitNumber} (${tenantName}) [Ref: ${ref}]`)
-
-    if (tenant?.id) {
-      try {
-        const recResult = await runTenantLedgerReconciliation(tenant.id, {
-          targetLeaseId: leaseId,
-          targetUnitNumber: unitNumber
-        })
-        if (recResult.lease) updatedLease = recResult.lease
-        recSummary = recResult.summary
-      } catch (err: any) {
-        logServerEvent('RECONCILE', `Auto reconciliation notice: ${err.message}`)
-      }
-    }
-
-    // Update persistent payment link (keeps same linkId active on partial payments; marks 'paid' only when balance === 0)
-    await recordPaymentAgainstActiveLink({
-      tenantId: tenant?.id || null,
-      paymentLinkId: kcbTx?.paymentLinkId || null,
-      amount,
-      mpesaReceipt: ref,
-      transactionId: ledgerTx!.id,
-      checkoutRequestId: params.checkoutRequestId || kcbTx?.checkoutRequestId || null,
-      remainingBalance: Number(recSummary?.balance ?? 0)
-    })
-
-    const notifResident = {
-      id: generateHexObjectId(),
-      userId: tenant?.id || null,
-      tenantId: tenant?.id || null,
-      role: 'tenant',
-      type: 'payment_received',
-      title: `Payment Received (KES ${amount.toLocaleString()})`,
-      message: `Your M-Pesa payment ${ref} of KES ${amount.toLocaleString()} for Unit ${unitNumber} has been received and reconciled.`,
-      timestamp: nowIso,
-      read: false,
-      link: '/tenant/payments'
-    }
-
-    const notifLandlord = {
-      id: generateHexObjectId(),
-      userId: null,
-      role: 'landlord',
-      type: 'payment_received',
-      title: `Payment Reconciled (Unit ${unitNumber})`,
-      message: `${tenantName} paid KES ${amount.toLocaleString()} via KCB M-Pesa (${ref}). Ledger updated.`,
-      timestamp: nowIso,
-      read: false,
-      link: '/payments'
-    }
-
-    await db.collection('notifications').insertMany([notifResident, notifLandlord])
-
-    let balanceSnippet = ''
-    if (recSummary) {
-      if (recSummary.balance > 0) {
-        balanceSnippet = ` Remaining balance: KES ${Math.round(recSummary.balance).toLocaleString()}.`
-      } else if (recSummary.accountCredit > 0) {
-        balanceSnippet = ` Prepaid credit: KES ${Math.round(recSummary.accountCredit).toLocaleString()}.`
+    let insertedFresh = false
+    try {
+      await db.collection('transactions').insertOne(ledgerTx as any)
+      insertedFresh = true
+    } catch (dupErr: any) {
+      if (dupErr?.code === 11000) {
+        ledgerTx = await db.collection('transactions').findOne({ reference: ref })
+        logServerEvent('PAYMENT', `Duplicate KCB reference ${ref} prevented atomically (idempotent skip).`)
       } else {
-        balanceSnippet = ' Account is settled.'
+        throw dupErr
       }
     }
 
-    const tenantSmsPhone = tenant?.phone || normalizedPhone
-    if (tenantSmsPhone) {
-      const firstName = String(tenantName || 'Resident').split(' ')[0]
-      notifyTenantSms(
-        tenantSmsPhone,
-        `Hi ${firstName}, Lapis Suites received your M-Pesa payment of KES ${amount.toLocaleString()} for Unit ${unitNumber} (Ref: ${ref}).${balanceSnippet} Thank you!`,
-        'payment_receipt',
-        { recipientEmail: tenant?.email, userId: tenant?.id || undefined, meta: { transactionId: ledgerTx!.id, reference: ref, paymentLinkId: kcbTx?.paymentLinkId || null } }
+    if (insertedFresh) {
+      logServerEvent('PAYMENT', `Ledger updated (${params.sourceLabel || 'callback'}): Reconciled KES ${amount.toLocaleString()} for Unit ${unitNumber} (${tenantName}) [Ref: ${ref}]`)
+
+      if (tenant?.id) {
+        try {
+          const recResult = await runTenantLedgerReconciliation(tenant.id, {
+            targetLeaseId: leaseId,
+            targetUnitNumber: unitNumber
+          })
+          if (recResult.lease) updatedLease = recResult.lease
+          recSummary = recResult.summary
+        } catch (err: any) {
+          logServerEvent('RECONCILE', `Auto reconciliation notice: ${err.message}`)
+        }
+      }
+
+      // Update persistent payment link (keeps same linkId active on partial payments; marks 'paid' only when balance === 0)
+      await recordPaymentAgainstActiveLink({
+        tenantId: tenant?.id || null,
+        paymentLinkId: kcbTx?.paymentLinkId || null,
+        amount,
+        mpesaReceipt: ref,
+        transactionId: ledgerTx!.id,
+        checkoutRequestId: params.checkoutRequestId || kcbTx?.checkoutRequestId || null,
+        remainingBalance: Number(recSummary?.balance ?? 0)
+      })
+
+      const notifResident = {
+        id: generateHexObjectId(),
+        userId: tenant?.id || null,
+        tenantId: tenant?.id || null,
+        role: 'tenant',
+        type: 'payment_received',
+        title: `Payment Received (KES ${amount.toLocaleString()})`,
+        message: `Your M-Pesa payment ${ref} of KES ${amount.toLocaleString()} for Unit ${unitNumber} has been received and reconciled.`,
+        timestamp: nowIso,
+        read: false,
+        link: '/tenant/payments'
+      }
+
+      const notifLandlord = {
+        id: generateHexObjectId(),
+        userId: null,
+        role: 'landlord',
+        type: 'payment_received',
+        title: `Payment Reconciled (Unit ${unitNumber})`,
+        message: `${tenantName} paid KES ${amount.toLocaleString()} via KCB M-Pesa (${ref}). Ledger updated.`,
+        timestamp: nowIso,
+        read: false,
+        link: '/payments'
+      }
+
+      await db.collection('notifications').insertMany([notifResident, notifLandlord])
+
+      let balanceSnippet = ''
+      if (recSummary) {
+        if (recSummary.balance > 0) {
+          balanceSnippet = ` Remaining balance: KES ${Math.round(recSummary.balance).toLocaleString()}.`
+        } else if (recSummary.accountCredit > 0) {
+          balanceSnippet = ` Prepaid credit: KES ${Math.round(recSummary.accountCredit).toLocaleString()}.`
+        } else {
+          balanceSnippet = ' Account is settled.'
+        }
+      }
+
+      const tenantSmsPhone = tenant?.phone || normalizedPhone
+      if (tenantSmsPhone) {
+        const firstName = String(tenantName || 'Resident').split(' ')[0]
+        notifyTenantSms(
+          tenantSmsPhone,
+          `Hi ${firstName}, Lapis Suites received your M-Pesa payment of KES ${amount.toLocaleString()} for Unit ${unitNumber} (Ref: ${ref}).${balanceSnippet} Thank you!`,
+          'payment_receipt',
+          { recipientEmail: tenant?.email, userId: tenant?.id || undefined, meta: { transactionId: ledgerTx!.id, reference: ref, paymentLinkId: kcbTx?.paymentLinkId || null } }
+        )
+      }
+
+      notifyAdminsSms(
+        `Lapis Suites Payment Received: ${tenantName} (Unit ${unitNumber}) paid KES ${amount.toLocaleString()} via M-Pesa STK (Ref: ${ref}).${balanceSnippet}`,
+        'payment_landlord_alert',
+        { transactionId: ledgerTx!.id, reference: ref, unitNumber, paymentLinkId: kcbTx?.paymentLinkId || null }
       )
+
+      broadcastServerEvent('payment_received', {
+        transaction: ledgerTx,
+        lease: updatedLease,
+        checkoutRequestId: params.checkoutRequestId || kcbTx?.checkoutRequestId,
+        merchantRequestId: params.merchantRequestId || kcbTx?.merchantRequestId,
+        tenantId: tenant?.id,
+        phoneNumber: normalizedPhone,
+        auditRecord: kcbTx
+      })
+      broadcastServerEvent('notification', notifResident)
+      broadcastServerEvent('notification', notifLandlord)
     }
-
-    notifyAdminsSms(
-      `Lapis Suites Payment Received: ${tenantName} (Unit ${unitNumber}) paid KES ${amount.toLocaleString()} via M-Pesa STK (Ref: ${ref}).${balanceSnippet}`,
-      'payment_landlord_alert',
-      { transactionId: ledgerTx!.id, reference: ref, unitNumber, paymentLinkId: kcbTx?.paymentLinkId || null }
-    )
-
-    broadcastServerEvent('payment_received', {
-      transaction: ledgerTx,
-      lease: updatedLease,
-      checkoutRequestId: params.checkoutRequestId || kcbTx?.checkoutRequestId,
-      merchantRequestId: params.merchantRequestId || kcbTx?.merchantRequestId,
-      tenantId: tenant?.id,
-      phoneNumber: normalizedPhone,
-      auditRecord: kcbTx
-    })
-    broadcastServerEvent('notification', notifResident)
-    broadcastServerEvent('notification', notifLandlord)
   }
 
   return { ledgerTx, updatedLease, recSummary, ref, tenantName, unitNumber, tenant }
@@ -1156,19 +1170,20 @@ router.post(['/kcb/callback', '/kcb/webhook', '/kcb/callback/:secret', '/kcb/web
 
     // If successful and amount verified, automatically reconcile into ledger and notify resident and landlord
     if (isSuccess && !amountMismatch && effectiveAmount > 0) {
-      // Prevent duplicate transaction entries
-      const existingLedger = await db.collection('transactions').findOne({ reference: ref })
+      const normalizedRef = String(ref || '').trim().toUpperCase()
+      // Prevent duplicate transaction entries (pre-check + atomic unique index guard)
+      const existingLedger = await db.collection('transactions').findOne({ reference: normalizedRef })
       if (!existingLedger) {
         ledgerTx = {
           id: generateHexObjectId(),
-          reference: ref,
+          reference: normalizedRef,
           invoiceRef: kcbTx?.invoiceNumber || `INV-KCB-${unitNumber}`,
           tenantId: tenant?.id || null,
           tenantName,
           unitId,
           unitNumber,
           leaseId,
-          amount,
+          amount: effectiveAmount,
           date: txDate,
           timestamp: nowIso.replace('T', ' ').slice(0, 19),
           method: 'stk_push',
@@ -1179,15 +1194,27 @@ router.post(['/kcb/callback', '/kcb/webhook', '/kcb/callback/:secret', '/kcb/web
           phoneNumber: normalizedPhone,
           payerName: tenantName,
           billRefNumber: unitNumber,
-          notes: `KCB M-Pesa STK payment (${ref}) - Reconciled automatically.`,
+          notes: `KCB M-Pesa STK payment (${normalizedRef}) - Reconciled automatically.`,
           reconciled: true,
           reconciledAt: nowIso,
           reconciledBy: 'Automated KCB IPN Webhook Engine',
           rawCallback: payload
         }
 
-        await db.collection('transactions').insertOne(ledgerTx)
-        logServerEvent('PAYMENT', `Ledger updated: Reconciled KES ${amount.toLocaleString()} for Unit ${unitNumber} (${tenantName}) [Ref: ${ref}]`)
+        let callbackInsertedFresh = false
+        try {
+          await db.collection('transactions').insertOne(ledgerTx)
+          callbackInsertedFresh = true
+        } catch (dupErr: any) {
+          if (dupErr?.code === 11000) {
+            ledgerTx = await db.collection('transactions').findOne({ reference: normalizedRef })
+            logServerEvent('PAYMENT', `Duplicate callback reference ${normalizedRef} skipped atomically.`)
+          } else {
+            throw dupErr
+          }
+        }
+        if (callbackInsertedFresh) {
+        logServerEvent('PAYMENT', `Ledger updated: Reconciled KES ${effectiveAmount.toLocaleString()} for Unit ${unitNumber} (${tenantName}) [Ref: ${normalizedRef}]`)
 
         // Run full ledger & deposit reconciliation for this tenant
         let recSummary: any = null
@@ -1296,6 +1323,7 @@ router.post(['/kcb/callback', '/kcb/webhook', '/kcb/callback/:secret', '/kcb/web
         })
         broadcastServerEvent('notification', notifResident)
         broadcastServerEvent('notification', notifLandlord)
+        }
       } else {
         ledgerTx = existingLedger
       }

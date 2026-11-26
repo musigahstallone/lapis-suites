@@ -5,6 +5,7 @@ import 'models.dart';
 import 'api.dart';
 import 'icons.dart';
 import 'widgets.dart';
+import 'receipt_pdf.dart';
 
 class MaintenanceTemplate {
   final String label;
@@ -104,6 +105,7 @@ void showPaymentDetailsSheet(
     );
   }
   bool isApproving = false;
+  bool isSharingPdf = false;
   String? errorMsg;
 
   final headerName = (tx.tenantName != null && tx.tenantName!.trim().isNotEmpty)
@@ -277,12 +279,59 @@ void showPaymentDetailsSheet(
               ],
 
               const SizedBox(height: 12),
-              SizedBox(
-                height: 41,
-                child: OutlinedButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: Text('Close', style: sans(12.5, color: C.textSecondary, weight: FontWeight.w600)),
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: SizedBox(
+                      height: 41,
+                      child: ElevatedButton.icon(
+                        onPressed: isSharingPdf
+                            ? null
+                            : () async {
+                                setMState(() {
+                                  isSharingPdf = true;
+                                  errorMsg = null;
+                                });
+                                try {
+                                  await ReceiptPdfService.sharePaymentReceipt(
+                                    tx,
+                                    unitTypeLabel: unitTypeLabel,
+                                  );
+                                } catch (e) {
+                                  if (ctx.mounted) {
+                                    setMState(() => errorMsg = 'Could not share receipt PDF.');
+                                  }
+                                } finally {
+                                  if (ctx.mounted) setMState(() => isSharingPdf = false);
+                                }
+                              },
+                        icon: isSharingPdf
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: C.ctaOn),
+                              )
+                            : const LapisIcon(LapisIconName.fileText, size: 14, color: C.ctaOn),
+                        label: Text(
+                          isSharingPdf ? 'Preparing...' : 'Share PDF',
+                          style: sans(12.5, color: C.ctaOn, weight: FontWeight.w600),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 2,
+                    child: SizedBox(
+                      height: 41,
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: Text('Close', style: sans(12.5, color: C.textSecondary, weight: FontWeight.w600)),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -873,10 +922,11 @@ void showStkPushSheet(
   );
 }
 
-/// 3. Admin Collect Payment Sheet (Manual Record OR Admin OTP-Verified STK Push)
+/// 3. Admin Collect Payment Sheet (Manual Record OR Admin OTP-Verified STK Push; conditional multi-unit selector)
 void showAdminCollectPaymentSheet(
   BuildContext context, {
   required List<TenantModel> tenants,
+  List<LeaseModel> leases = const [],
   TenantModel? initialTenant,
   VoidCallback? onComplete,
 }) {
@@ -886,6 +936,9 @@ void showAdminCollectPaymentSheet(
   }
 
   TenantModel selected = initialTenant ?? tenants.first;
+  List<LeaseModel> activeLeasesFor(TenantModel t) =>
+      leases.where((l) => l.tenantId == t.id && l.isActive).toList();
+  LeaseModel? selectedLease = activeLeasesFor(selected).isNotEmpty ? activeLeasesFor(selected).first : null;
   String mode = 'manual'; // 'manual' | 'admin_stk'
   final amountCtrl = TextEditingController(
     text: selected.effectiveBalanceDue > 0 ? selected.effectiveBalanceDue.toString() : '',
@@ -910,6 +963,12 @@ void showAdminCollectPaymentSheet(
     ),
     builder: (ctx) => StatefulBuilder(
       builder: (ctx, setMState) {
+        final tenantActiveLeases = activeLeasesFor(selected);
+        final hasMultipleUnits = tenantActiveLeases.length > 1;
+        final targetUnitId = selectedLease?.unitId ?? selected.currentUnitId;
+        final targetLeaseId = selectedLease?.id ?? selected.currentLeaseId;
+        final targetUnitNumber = selectedLease?.unitNumber ?? selected.currentUnitNumber;
+
         return SafeArea(
           child: SingleChildScrollView(
             padding: EdgeInsets.only(
@@ -1007,8 +1066,10 @@ void showAdminCollectPaymentSheet(
                       ? null
                       : (id) {
                           final found = tenants.firstWhere((t) => t.id == id, orElse: () => selected);
+                          final foundLeases = activeLeasesFor(found);
                           setMState(() {
                             selected = found;
+                            selectedLease = foundLeases.isNotEmpty ? foundLeases.first : null;
                             phoneCtrl.text = extractKenyaNineDigits(found.phone);
                             if (found.effectiveBalanceDue > 0) {
                               amountCtrl.text = found.effectiveBalanceDue.toString();
@@ -1016,6 +1077,39 @@ void showAdminCollectPaymentSheet(
                           });
                         },
                 ),
+
+                // Conditional Multi-Unit Selector — ONLY shown when resident holds 2+ active units!
+                if (hasMultipleUnits) ...[
+                  const SizedBox(height: 12),
+                  Text('Target Unit', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
+                  const SizedBox(height: 5),
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedLease?.id ?? tenantActiveLeases.first.id,
+                    dropdownColor: C.surface,
+                    isExpanded: true,
+                    style: sans(12.5, color: C.textPrimary),
+                    decoration: fieldDecoration(),
+                    items: tenantActiveLeases
+                        .map((l) => DropdownMenuItem(
+                              value: l.id,
+                              child: Text(
+                                'Unit ${l.unitNumber} · ${formatUnitTypeLabel(l.unitType)}',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ))
+                        .toList(),
+                    onChanged: otpSent
+                        ? null
+                        : (lid) {
+                            setMState(() {
+                              selectedLease = tenantActiveLeases.firstWhere(
+                                (l) => l.id == lid,
+                                orElse: () => tenantActiveLeases.first,
+                              );
+                            });
+                          },
+                  ),
+                ],
                 const SizedBox(height: 12),
 
                 Text('Amount (KES)', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
@@ -1071,9 +1165,9 @@ void showAdminCollectPaymentSheet(
                               });
                               final res = await ApiService.recordManualPayment(
                                 tenantId: selected.id,
-                                unitId: selected.currentUnitId,
-                                leaseId: selected.currentLeaseId,
-                                unitNumber: selected.currentUnitNumber,
+                                unitId: targetUnitId,
+                                leaseId: targetLeaseId,
+                                unitNumber: targetUnitNumber,
                                 amount: amt,
                                 reference: refCtrl.text.trim().isNotEmpty
                                     ? refCtrl.text.trim()
@@ -1131,7 +1225,7 @@ void showAdminCollectPaymentSheet(
                                 });
                                 final r = await ApiService.requestAdminStkOtp(
                                   amount: amt,
-                                  unitNumber: selected.currentUnitNumber,
+                                  unitNumber: targetUnitNumber,
                                   tenantName: selected.name,
                                 );
                                 if (!ctx.mounted) return;
@@ -1186,7 +1280,7 @@ void showAdminCollectPaymentSheet(
                                   code: code,
                                   phoneNumber: phoneCtrl.text.trim(),
                                   amount: amt,
-                                  unitNumber: selected.currentUnitNumber,
+                                  unitNumber: targetUnitNumber,
                                   tenantId: selected.id,
                                 );
                                 if (!ctx.mounted) return;

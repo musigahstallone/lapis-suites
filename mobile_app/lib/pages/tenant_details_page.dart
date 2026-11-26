@@ -5,6 +5,7 @@ import '../core/api.dart';
 import '../core/icons.dart';
 import '../core/widgets.dart';
 import '../core/sheets.dart';
+import '../core/crud_sheets.dart';
 
 class TenantDetailsPage extends StatefulWidget {
   final TenantModel tenant;
@@ -303,21 +304,47 @@ class _TenantDetailsPageState extends State<TenantDetailsPage> {
 
           if (ApiService.isLandlord) ...[
             const SizedBox(height: 12),
-            SizedBox(
-              height: 44,
-              child: OutlinedButton.icon(
-                onPressed: () => showAdminCollectPaymentSheet(
-                  context,
-                  tenants: [t],
-                  initialTenant: t,
-                  onComplete: () async {
-                    final up = await ApiService.fetchTenantProfile(t.id);
-                    if (up != null && mounted) setState(() => _tenant = up);
-                  },
+            Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: SizedBox(
+                    height: 44,
+                    child: OutlinedButton.icon(
+                      onPressed: () => showAdminCollectPaymentSheet(
+                        context,
+                        tenants: [t],
+                        initialTenant: t,
+                        onComplete: () async {
+                          final up = await ApiService.fetchTenantProfile(t.id);
+                          if (up != null && mounted) setState(() => _tenant = up);
+                        },
+                      ),
+                      icon: const LapisIcon(LapisIconName.wallet, size: 15, color: C.navy),
+                      label: Text('Collect Payment', style: sans(12.5, color: C.navy, weight: FontWeight.w600)),
+                    ),
+                  ),
                 ),
-                icon: const LapisIcon(LapisIconName.wallet, size: 15, color: C.navy),
-                label: Text('Collect Payment', style: sans(12.5, color: C.navy, weight: FontWeight.w600)),
-              ),
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 2,
+                  child: SizedBox(
+                    height: 44,
+                    child: OutlinedButton.icon(
+                      onPressed: () => showLedgerAdjustmentSheet(
+                        context,
+                        tenant: t,
+                        onSaved: () async {
+                          final up = await ApiService.fetchTenantProfile(t.id);
+                          if (up != null && mounted) setState(() => _tenant = up);
+                        },
+                      ),
+                      icon: const LapisIcon(LapisIconName.plus, size: 14, color: C.navy),
+                      label: Text('Adjust', style: sans(12.5, color: C.navy, weight: FontWeight.w600)),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
 

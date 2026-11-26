@@ -5,6 +5,8 @@ import { authenticateToken, requireRole, AuthRequest } from '../middleware/auth'
 import { logServerEvent } from '../middleware/logger'
 import { notifyTenantSms } from '../services/sms'
 import { getRentDueDay } from '../services/settings'
+import { logAuditEvent } from '../services/audit'
+import { isIsoDate, parsePositiveAmount, parseNonNegativeAmount, cleanString } from '../middleware/validate'
 
 const router = Router()
 
@@ -76,6 +78,20 @@ router.post('/leases', authenticateToken, requireRole(['landlord']), async (req:
     const { tenantId, unitId, startDate, endDate, monthlyRent, depositAmount, depositPaid, terms } = req.body
     if (!tenantId || !unitId || !startDate || !endDate) {
       return res.status(400).json({ error: 'Tenant, Unit, Start Date, and End Date are required' })
+    }
+    if (!isIsoDate(startDate) || !isIsoDate(endDate)) {
+      return res.status(400).json({ error: 'Start Date and End Date must be valid YYYY-MM-DD dates.' })
+    }
+    if (String(endDate) < String(startDate)) {
+      return res.status(400).json({ error: 'End Date cannot be earlier than Start Date.' })
+    }
+    const validatedRent = parsePositiveAmount(monthlyRent)
+    if (validatedRent === null) {
+      return res.status(400).json({ error: 'Monthly rent must be a valid positive amount.' })
+    }
+    const validatedDeposit = depositAmount !== undefined ? parseNonNegativeAmount(depositAmount) : validatedRent
+    if (validatedDeposit === null) {
+      return res.status(400).json({ error: 'Deposit amount must be zero or a valid positive amount.' })
     }
 
     const unit = await db.collection('units').findOne({ id: unitId })
@@ -169,6 +185,13 @@ router.post('/leases', authenticateToken, requireRole(['landlord']), async (req:
     )
 
     logServerEvent('LEASES', `Created lease ${leaseNumber} in MongoDB: Unit ${unit.unitNumber} -> ${tenant.name} (total active leases: ${allTenantLeases.length})`)
+    await logAuditEvent({
+      actor: req.user,
+      action: 'lease.create',
+      entityType: 'lease',
+      entityId: leaseId,
+      summary: `Created lease ${leaseNumber} for ${tenant.name} on Unit ${unit.unitNumber} (KES ${rentNum.toLocaleString()}/mo)`
+    })
 
     // Notify tenant via SMS about their new lease assignment
     if (tenant.phone) {
@@ -187,7 +210,7 @@ router.post('/leases', authenticateToken, requireRole(['landlord']), async (req:
   }
 })
 
-// POST /api/leases/:id/terminate (Landlord only)
+// POST /api/leases/:id/terminate (Landlord only — supports optional Move-Out Settlement)
 router.post('/leases/:id/terminate', authenticateToken, requireRole(['landlord']), async (req: AuthRequest, res: Response) => {
   try {
     const db = getDb()
@@ -196,7 +219,34 @@ router.post('/leases/:id/terminate', authenticateToken, requireRole(['landlord']
     if (!lease) return res.status(404).json({ error: 'Lease not found' })
 
     const nowIso = new Date().toISOString()
-    await db.collection('leases').updateOne({ id }, { $set: { status: 'terminated', terminatedAt: nowIso } })
+    const body = req.body || {}
+    const depositHeld = lease.depositPaid ? Number(lease.depositAmount || 0) : 0
+    const rawDeductions = body.deductions ?? body.moveOutSettlement?.deductions ?? 0
+    const deductions = parseNonNegativeAmount(rawDeductions) ?? 0
+    const deductionNotes = cleanString(body.deductionNotes ?? body.moveOutSettlement?.deductionNotes ?? body.reason ?? '', 300)
+    const netRefundable = Math.max(0, depositHeld - deductions)
+    const balanceOwedAfterDeposit = Math.max(0, deductions - depositHeld)
+
+    const moveOutSettlement = {
+      depositHeld,
+      deductions,
+      deductionNotes,
+      netRefundable,
+      balanceOwedAfterDeposit,
+      settledBy: req.user?.name || req.user?.email || 'Admin',
+      settledAt: nowIso
+    }
+
+    await db.collection('leases').updateOne(
+      { id },
+      {
+        $set: {
+          status: 'terminated',
+          terminatedAt: nowIso,
+          moveOutSettlement
+        }
+      }
+    )
     if (lease.unitId) {
       await db.collection('units').updateOne(
         { id: lease.unitId },
@@ -229,8 +279,16 @@ router.post('/leases/:id/terminate', authenticateToken, requireRole(['landlord']
         { $set: { unitNumber: nextPrimary ? nextPrimary.unitNumber : '', updatedAt: nowIso } }
       )
     }
-    logServerEvent('LEASES', `Terminated lease ${lease.leaseNumber} in MongoDB. Unit ${lease.unitNumber} marked vacant.`)
-    res.json({ success: true, message: 'Lease terminated' })
+    logServerEvent('LEASES', `Terminated lease ${lease.leaseNumber} in MongoDB. Unit ${lease.unitNumber} marked vacant. Net refund: KES ${netRefundable}.`)
+    await logAuditEvent({
+      actor: req.user,
+      action: 'lease.terminate',
+      entityType: 'lease',
+      entityId: id,
+      summary: `Terminated lease ${lease.leaseNumber} for ${lease.tenantName} (Unit ${lease.unitNumber}). Deposit held: KES ${depositHeld.toLocaleString()}, Deductions: KES ${deductions.toLocaleString()}, Net refund: KES ${netRefundable.toLocaleString()}`,
+      meta: moveOutSettlement
+    })
+    res.json({ success: true, message: 'Lease terminated', moveOutSettlement })
   } catch (err: any) {
     res.status(500).json({ error: err.message })
   }

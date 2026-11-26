@@ -6,6 +6,7 @@ import '../core/models.dart';
 import '../core/icons.dart';
 import '../core/widgets.dart';
 import '../core/sheets.dart';
+import '../core/crud_sheets.dart';
 import '../core/logo.dart';
 import '../auth/login_page.dart';
 import 'notifications_page.dart';
@@ -16,12 +17,14 @@ import 'lease_details_page.dart';
 class ProfileSettingsPage extends StatefulWidget {
   final bool showBackButton;
   final LeaseModel? residentLease;
+  final List<TenantModel> tenants;
   final VoidCallback? onDataChanged;
 
   const ProfileSettingsPage({
     super.key,
     this.showBackButton = false,
     this.residentLease,
+    this.tenants = const [],
     this.onDataChanged,
   });
 
@@ -33,7 +36,8 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
   PropertySettingsModel _settings = ApiService.cachedSettings;
   List<AdminAccountModel> _admins = [];
   int _unreadCount = 0;
-  bool _isRunningReminders = false;
+  bool _isLoadingReminders = false;
+  bool _isRevokingAll = false;
   NetworkStatus? _net;
 
   @override
@@ -64,16 +68,62 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
     });
   }
 
-  Future<void> _handleRunReminders() async {
-    setState(() => _isRunningReminders = true);
-    final res = await ApiService.runRentReminders();
-    if (!mounted) return;
-    setState(() => _isRunningReminders = false);
+  Future<void> _handleOpenRemindersConfirm() async {
+    List<TenantModel> tenantsList = widget.tenants;
+    if (tenantsList.isEmpty) {
+      setState(() => _isLoadingReminders = true);
+      try {
+        final d = await ApiService.fetchDashboardStats();
+        tenantsList = d.tenants;
+      } catch (_) {}
+      if (!mounted) return;
+      setState(() => _isLoadingReminders = false);
+    }
 
+    showSendRemindersConfirmSheet(
+      context,
+      tenants: tenantsList,
+      onSent: () => widget.onDataChanged?.call(),
+    );
+  }
+
+  Future<void> _handleLogoutAllDevices() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: C.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Text('Sign Out All Devices', style: flex(14.5, color: C.textPrimary)),
+        content: Text(
+          'This will revoke your session on every phone and browser immediately.',
+          style: sans(12.5, color: C.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Cancel', style: sans(12, color: C.textMuted, weight: FontWeight.w600)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: C.roseText, foregroundColor: Colors.white),
+            child: Text('Sign Out All', style: sans(12, color: Colors.white, weight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+
+    setState(() => _isRevokingAll = true);
+    final res = await ApiService.logoutAllDevices();
+    if (!mounted) return;
+    setState(() => _isRevokingAll = false);
     if (res['success'] == true) {
-      showAppSnackBar(context, res['message']?.toString() ?? 'Rent reminders sent.');
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LoginPage()),
+        (route) => false,
+      );
     } else {
-      showAppSnackBar(context, res['error']?.toString() ?? 'Could not send reminders.', isError: true);
+      showAppSnackBar(context, res['error']?.toString() ?? 'Could not sign out all devices.', isError: true);
     }
   }
 
@@ -205,10 +255,26 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
                     ),
                     _linkTile(
                       icon: LapisIconName.send,
-                      title: _isRunningReminders ? 'Sending Reminders...' : 'Rent Reminders',
-                      onTap: _isRunningReminders ? null : _handleRunReminders,
+                      title: _isLoadingReminders ? 'Loading Unpaid...' : 'Rent Reminders',
+                      onTap: _isLoadingReminders ? null : _handleOpenRemindersConfirm,
                     ),
                   ],
+                ]),
+
+                const SizedBox(height: 18),
+                _groupLabel('Security'),
+                const SizedBox(height: 6),
+                _settingsGroup([
+                  _linkTile(
+                    icon: LapisIconName.shieldCheck,
+                    title: 'Change Password',
+                    onTap: () => showChangePasswordSheet(context),
+                  ),
+                  _linkTile(
+                    icon: LapisIconName.logOut,
+                    title: _isRevokingAll ? 'Signing Out All...' : 'Sign Out All Devices',
+                    onTap: _isRevokingAll ? null : _handleLogoutAllDevices,
+                  ),
                 ]),
 
                 const SizedBox(height: 18),

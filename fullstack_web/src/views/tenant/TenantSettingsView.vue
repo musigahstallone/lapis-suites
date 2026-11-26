@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { User, Save, CheckCircle2, ShieldCheck, Lock, AlertCircle, Phone } from 'lucide-vue-next'
-import { store, updateTenant } from '../../data'
+import { useRouter } from 'vue-router'
+import { User, Save, CheckCircle2, ShieldCheck, Lock, AlertCircle, Phone, KeyRound, LogOut } from 'lucide-vue-next'
+import { store, updateTenant, changeMyPassword, logoutAllDevices, logout } from '../../data'
+
+const router = useRouter()
 
 const resident = computed(() => {
   return (
@@ -17,6 +20,62 @@ const otherPhone = ref(resident.value?.otherPhone || resident.value?.emergencyCo
 const saved = ref(false)
 const error = ref('')
 const isSaving = ref(false)
+
+// Security controls (Change Password & Sign Out All Devices)
+const currentPassword = ref('')
+const newPassword = ref('')
+const confirmPassword = ref('')
+const isUpdatingPassword = ref(false)
+const passwordError = ref('')
+const passwordSuccess = ref('')
+const isRevokingAll = ref(false)
+
+async function handleChangePassword() {
+  passwordError.value = ''
+  passwordSuccess.value = ''
+  if (!currentPassword.value || !newPassword.value) {
+    passwordError.value = 'Enter your current password and a new password.'
+    return
+  }
+  if (newPassword.value.length < 6) {
+    passwordError.value = 'New password must be at least 6 characters.'
+    return
+  }
+  if (newPassword.value !== confirmPassword.value) {
+    passwordError.value = 'New passwords do not match.'
+    return
+  }
+  isUpdatingPassword.value = true
+  try {
+    await changeMyPassword({
+      currentPassword: currentPassword.value,
+      newPassword: newPassword.value,
+      confirmPassword: confirmPassword.value
+    })
+    currentPassword.value = ''
+    newPassword.value = ''
+    confirmPassword.value = ''
+    passwordSuccess.value = 'Password updated and other sessions revoked.'
+    setTimeout(() => { passwordSuccess.value = '' }, 4000)
+  } catch (err: any) {
+    passwordError.value = err.message || 'Could not update password.'
+  } finally {
+    isUpdatingPassword.value = false
+  }
+}
+
+async function handleLogoutAll() {
+  isRevokingAll.value = true
+  try {
+    await logoutAllDevices()
+    logout()
+    router.push('/login')
+  } catch (err: any) {
+    passwordError.value = err.message || 'Could not sign out all devices.'
+  } finally {
+    isRevokingAll.value = false
+  }
+}
 
 watch(resident, (r) => {
   if (r) {
@@ -180,6 +239,55 @@ async function handleSave() {
           </button>
         </div>
       </form>
+
+      <!-- Account Security Card -->
+      <section class="panel" style="padding: 24px; margin-top: 20px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+          <div>
+            <h3 style="font-size: 0.95rem; font-weight: 700; color: #0f172a; margin: 0; display: flex; align-items: center; gap: 8px;">
+              <KeyRound :size="16" style="color: #0f172a;" />
+              <span>Password &amp; Sessions</span>
+            </h3>
+            <p style="font-size: 0.80rem; color: #64748b; margin: 4px 0 0 0;">
+              Changing your password signs out all other devices automatically.
+            </p>
+          </div>
+          <button type="button" class="secondary-button" :disabled="isRevokingAll" @click="handleLogoutAll">
+            <LogOut :size="14" />
+            <span>{{ isRevokingAll ? 'Signing out...' : 'Sign Out All Devices' }}</span>
+          </button>
+        </div>
+
+        <div v-if="passwordSuccess" style="padding: 10px 14px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #047857; border-radius: 8px; font-size: 0.83rem; margin-bottom: 14px;">
+          {{ passwordSuccess }}
+        </div>
+        <div v-if="passwordError" style="padding: 10px 14px; background: #fef2f2; border: 1px solid #fee2e2; color: #b91c1c; border-radius: 8px; font-size: 0.83rem; margin-bottom: 14px;">
+          {{ passwordError }}
+        </div>
+
+        <form @submit.prevent="handleChangePassword">
+          <div class="form-field">
+            <label>Current Password</label>
+            <input v-model="currentPassword" type="password" required placeholder="Enter current password" />
+          </div>
+          <div class="form-row">
+            <div class="form-field">
+              <label>New Password</label>
+              <input v-model="newPassword" type="password" required minlength="6" placeholder="At least 6 characters" />
+            </div>
+            <div class="form-field">
+              <label>Confirm New Password</label>
+              <input v-model="confirmPassword" type="password" required minlength="6" placeholder="Re-enter new password" />
+            </div>
+          </div>
+          <div style="display: flex; justify-content: flex-end; margin-top: 12px;">
+            <button type="submit" class="primary-button" :disabled="isUpdatingPassword">
+              <KeyRound :size="14" />
+              <span>{{ isUpdatingPassword ? 'Updating...' : 'Update Password' }}</span>
+            </button>
+          </div>
+        </form>
+      </section>
     </div>
   </div>
 </template>

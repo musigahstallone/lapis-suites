@@ -16,9 +16,11 @@ import { authenticateToken, requireRole, AuthRequest, AuthUserPayload } from '..
 import { createRateLimiter } from '../middleware/rateLimiter'
 import { logServerEvent } from '../middleware/logger'
 import { sendSms } from '../services/sms'
+import { logAuditEvent } from '../services/audit'
 
 const OTP_TTL_MS = 10 * 60 * 1000 // 10 minutes
 const OTP_MAX_ATTEMPTS = 5
+const SESSION_TOKEN_TTL = '7d'
 
 function generateOtpCode(): string {
   return crypto.randomInt(100000, 1000000).toString()
@@ -189,9 +191,10 @@ router.post('/login', loginRateLimiter, async (req: Request, res: Response) => {
           phone: '',
           tenantId: null,
           unitNumber: '',
-          avatarInitials: user.avatarInitials || 'AD'
+          avatarInitials: user.avatarInitials || 'AD',
+          tv: Number(user.tokenVersion || 0)
         }
-        const token = jwt.sign(bootstrapPayload, JWT_SECRET, { expiresIn: '24h' })
+        const token = jwt.sign(bootstrapPayload, JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL })
         return res.json({
           ok: true,
           token,
@@ -317,10 +320,11 @@ router.post('/login', loginRateLimiter, async (req: Request, res: Response) => {
       phone: user.phone || tenantDoc?.phone || '',
       tenantId,
       unitNumber,
-      avatarInitials: user.avatarInitials || (user.name ? user.name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase() : 'US')
+      avatarInitials: user.avatarInitials || (user.name ? user.name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase() : 'US'),
+      tv: Number(user.tokenVersion || 0)
     }
 
-    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '24h' })
+    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL })
     logServerEvent('AUTH', `Successful login: ${user.name} <${user.email}> (${user.role})`)
 
     res.json({
@@ -416,10 +420,11 @@ router.post('/verify-login-otp', otpRateLimiter, async (req: Request, res: Respo
       phone: user.phone || '',
       tenantId: null,
       unitNumber: '',
-      avatarInitials: user.avatarInitials || (user.name ? user.name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase() : 'AD')
+      avatarInitials: user.avatarInitials || (user.name ? user.name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase() : 'AD'),
+      tv: Number(user.tokenVersion || 0)
     }
 
-    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '24h' })
+    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL })
     logServerEvent('AUTH', `Admin 2FA verified & signed in: ${user.name} <${user.email}>`)
 
     res.json({
@@ -773,7 +778,7 @@ router.post('/register/verify-otp', otpRateLimiter, async (req: Request, res: Re
       avatarInitials: initials
     }
 
-    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '24h' })
+    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL })
     logServerEvent('AUTH', `Verified SMS OTP and activated resident account: ${cleanEmail} (${regDoc.mode})`)
 
     res.status(201).json({
@@ -888,7 +893,7 @@ router.post('/register', async (req: Request, res: Response) => {
       avatarInitials: initials
     }
 
-    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '24h' })
+    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL })
     logServerEvent('AUTH', `Registered new resident: ${cleanEmail} (${trimmedName})`)
     res.status(201).json({ ok: true, token, user: tokenPayload, tenant: newTenantDoc })
   } catch (err: any) {
@@ -949,13 +954,161 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => 
       phone,
       tenantId: tenantId || req.user.tenantId || null,
       unitNumber: unitNumber || '',
-      avatarInitials: user?.avatarInitials || req.user.avatarInitials || 'US'
+      avatarInitials: user?.avatarInitials || req.user.avatarInitials || 'US',
+      tv: Number(user?.tokenVersion || 0)
     }
 
     res.json({ user: payload })
   } catch (err: any) {
     res.json({ user: req.user })
   }
+})
+
+// POST /api/auth/refresh — Sliding 7-day session refresh for authenticated users
+router.post('/refresh', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const db = getDb()
+    const user = await db.collection('users').findOne({ id: req.user!.userId })
+    if (!user) {
+      return res.status(401).json({ error: 'Account no longer exists. Please sign in again.' })
+    }
+    if (user.role === 'landlord') {
+      const policy = await verifyAdminPolicy(db, user)
+      if (!policy.ok) return res.status(403).json({ error: policy.error })
+    }
+
+    let tenantId: string | null = user.tenantId || null
+    let unitNumber = user.unitNumber || ''
+    let phone = user.phone || ''
+
+    if (user.role === 'tenant') {
+      const cleanEmail = String(user.email || '').trim().toLowerCase()
+      const tenantDoc = cleanEmail ? await db.collection('tenants').findOne({ email: cleanEmail }) : null
+      if (tenantDoc) {
+        tenantId = tenantDoc.id
+        phone = phone || tenantDoc.phone || ''
+        const primaryLease = await db.collection('leases').findOne(
+          { tenantId: tenantDoc.id, status: { $in: ['active', 'pending_deposit'] } },
+          { sort: { startDate: 1, createdAt: 1 } }
+        )
+        unitNumber = primaryLease?.unitNumber || tenantDoc.currentUnitNumber || ''
+      }
+    }
+
+    const tokenPayload: AuthUserPayload = {
+      userId: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      phone,
+      tenantId,
+      unitNumber,
+      avatarInitials: user.avatarInitials || 'US',
+      tv: Number(user.tokenVersion || 0)
+    }
+
+    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL })
+    res.json({ ok: true, token, user: tokenPayload })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/auth/logout-all — Revokes all active sessions across all devices by bumping tokenVersion
+router.post('/logout-all', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const db = getDb()
+    await db.collection('users').updateOne(
+      { id: req.user!.userId },
+      { $inc: { tokenVersion: 1 }, $set: { updatedAt: new Date().toISOString() } }
+    )
+    logServerEvent('AUTH', `Revoked all sessions for ${req.user!.email}`)
+    await logAuditEvent({
+      actor: req.user,
+      action: 'auth.logout_all',
+      entityType: 'auth',
+      entityId: req.user!.userId,
+      summary: `${req.user!.name} signed out of all devices`
+    })
+    res.json({ ok: true, message: 'All active sessions have been signed out.' })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/auth/change-password — Authenticated password change (requires currentPassword; bumps tokenVersion & returns fresh JWT)
+router.post('/change-password', async (req: Request, res: Response, next) => {
+  // If client sends resetToken or code without Authorization header, pass through to legacy reset flow below
+  if (!req.headers['authorization'] && (req.body?.resetToken || req.body?.code)) {
+    return next()
+  }
+  return authenticateToken(req as AuthRequest, res, async () => {
+    try {
+      const authReq = req as AuthRequest
+      const db = getDb()
+      const currentPassword = String(req.body?.currentPassword || '')
+      const newPassword = String(req.body?.newPassword || req.body?.password || '')
+      const confirmPassword = String(req.body?.confirmPassword ?? newPassword)
+
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ error: 'Current password and new password are required.' })
+      }
+      if (newPassword.length < 6) {
+        return res.status(400).json({ error: 'New password must be at least 6 characters long.' })
+      }
+      if (newPassword !== confirmPassword) {
+        return res.status(400).json({ error: 'New passwords do not match.' })
+      }
+      if (currentPassword === newPassword) {
+        return res.status(400).json({ error: 'New password must be different from your current password.' })
+      }
+
+      const user = await db.collection('users').findOne({ id: authReq.user!.userId })
+      if (!user) {
+        return res.status(404).json({ error: 'Account not found.' })
+      }
+      if (!bcrypt.compareSync(currentPassword, user.passwordHash)) {
+        return res.status(400).json({ error: 'Current password is incorrect.' })
+      }
+
+      const nextTv = Number(user.tokenVersion || 0) + 1
+      await db.collection('users').updateOne(
+        { id: user.id },
+        {
+          $set: {
+            passwordHash: bcrypt.hashSync(newPassword, 10),
+            tokenVersion: nextTv,
+            accountClaimed: true,
+            updatedAt: new Date().toISOString()
+          }
+        }
+      )
+
+      const freshPayload: AuthUserPayload = {
+        userId: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        phone: user.phone || authReq.user!.phone || '',
+        tenantId: user.tenantId || authReq.user!.tenantId || null,
+        unitNumber: user.unitNumber || authReq.user!.unitNumber || '',
+        avatarInitials: user.avatarInitials || authReq.user!.avatarInitials || 'US',
+        tv: nextTv
+      }
+      const token = jwt.sign(freshPayload, JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL })
+      logServerEvent('AUTH', `Changed password and rotated sessions for ${user.email}`)
+      await logAuditEvent({
+        actor: authReq.user,
+        action: 'auth.change_password',
+        entityType: 'auth',
+        entityId: user.id,
+        summary: `${user.name} changed account password (revoked prior sessions)`
+      })
+      res.json({ ok: true, token, user: freshPayload, message: 'Password updated successfully.' })
+    } catch (err: any) {
+      res.status(500).json({ error: err.message })
+    }
+  })
 })
 
 // PUT /api/auth/admin-phone
@@ -1210,6 +1363,7 @@ router.all(['/reset-password', '/change-password'], async (req: Request, res: Re
     await db.collection('users').updateOne(
       { id: verifiedUser.id },
       {
+        $inc: { tokenVersion: 1 },
         $set: {
           passwordHash,
           accountClaimed: true,
@@ -1226,6 +1380,13 @@ router.all(['/reset-password', '/change-password'], async (req: Request, res: Re
     )
 
     logServerEvent('AUTH', `PASSWORD RESET: Successfully updated password for ${verifiedUser.email}`)
+    await logAuditEvent({
+      actor: { userId: verifiedUser.id, email: verifiedUser.email, name: verifiedUser.name, role: verifiedUser.role },
+      action: 'auth.reset_password',
+      entityType: 'auth',
+      entityId: verifiedUser.id,
+      summary: `Password reset via SMS OTP for ${verifiedUser.email} (all prior sessions revoked)`
+    })
     res.json({
       ok: true,
       email: cleanEmail,

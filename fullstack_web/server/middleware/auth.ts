@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
 import { JWT_SECRET, isAllowedAdminEmail } from '../config'
+import { getDb, isDbConnected } from '../db'
 
 export interface AuthUserPayload {
   userId: string
@@ -11,6 +12,7 @@ export interface AuthUserPayload {
   tenantId?: string | null
   unitNumber?: string
   avatarInitials: string
+  tv?: number
 }
 
 export interface PublicPaySessionPayload {
@@ -35,7 +37,24 @@ function extractBearerToken(req: Request): string | null {
   return null
 }
 
-export function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
+async function isTokenVersionValid(userId: string, tokenTv?: number): Promise<boolean> {
+  if (!isDbConnected()) return true
+  try {
+    const db = getDb()
+    const userDoc = await db.collection('users').findOne(
+      { id: userId },
+      { projection: { tokenVersion: 1 } }
+    )
+    if (!userDoc) return true
+    const currentTv = Number(userDoc.tokenVersion || 0)
+    const claimedTv = Number(tokenTv ?? 0)
+    return currentTv === claimedTv
+  } catch {
+    return true
+  }
+}
+
+export async function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
   const token = extractBearerToken(req)
 
   if (!token) {
@@ -54,6 +73,10 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
     if (decoded.role === 'landlord' && !isAllowedAdminEmail(decoded.email)) {
       return res.status(403).json({ error: 'Access denied: unauthorized administrator account.' })
     }
+    const validVersion = await isTokenVersionValid(String(decoded.userId), decoded.tv)
+    if (!validVersion) {
+      return res.status(401).json({ error: 'Session has been revoked. Please sign in again.' })
+    }
     req.user = decoded as AuthUserPayload
     next()
   } catch {
@@ -65,7 +88,7 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
  * Accepts EITHER a standard authenticated user JWT OR a verified `public_pay_session` JWT.
  * Used for payment status endpoints shared by logged-in users and OTP-verified public payment links.
  */
-export function authenticateUserOrPaySession(req: AuthRequest, res: Response, next: NextFunction) {
+export async function authenticateUserOrPaySession(req: AuthRequest, res: Response, next: NextFunction) {
   const token = extractBearerToken(req) || (typeof req.body?.paySessionToken === 'string' ? req.body.paySessionToken : null)
   if (!token) {
     return res.status(401).json({ error: 'Authentication required.' })
@@ -80,6 +103,10 @@ export function authenticateUserOrPaySession(req: AuthRequest, res: Response, ne
     if (!decoded.purpose && decoded.userId && decoded.role) {
       if (decoded.role === 'landlord' && !isAllowedAdminEmail(decoded.email)) {
         return res.status(403).json({ error: 'Access denied: unauthorized administrator account.' })
+      }
+      const validVersion = await isTokenVersionValid(String(decoded.userId), decoded.tv)
+      if (!validVersion) {
+        return res.status(401).json({ error: 'Session has been revoked. Please sign in again.' })
       }
       req.user = decoded as AuthUserPayload
       return next()

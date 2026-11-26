@@ -47,7 +47,28 @@ router.get('/notifications', authenticateToken, async (req: AuthRequest, res: Re
 router.post('/notifications/:id/read', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const db = getDb()
-    const { id } = req.params
+    const id = String(req.params.id)
+    const user = req.user!
+    const existing = await db.collection('notifications').findOne({ id })
+    if (!existing) {
+      return res.status(404).json({ error: 'Notification not found.' })
+    }
+
+    if (user.role === 'tenant') {
+      const isBroadcast =
+        (existing.role === 'all' || existing.role === 'tenant') &&
+        !existing.tenantId &&
+        !existing.userId
+      const isOwn =
+        (user.tenantId && existing.tenantId === user.tenantId) ||
+        (user.userId && (existing.tenantId === user.userId || existing.userId === user.userId))
+      if (!isOwn && !isBroadcast) {
+        return res.status(403).json({ error: 'Access denied to this notification.' })
+      }
+    } else if (existing.role === 'tenant' && existing.tenantId) {
+      return res.status(403).json({ error: 'Cannot alter resident-private notification state.' })
+    }
+
     await db.collection('notifications').updateOne({ id }, { $set: { read: true } })
     res.json({ success: true })
   } catch (err: any) {
@@ -62,7 +83,18 @@ router.post('/notifications/mark-all-read', authenticateToken, async (req: AuthR
     const user = req.user!
     let query: any = {}
     if (user.role === 'tenant') {
-      query = { $or: [{ tenantId: user.tenantId }, { role: 'tenant' }, { role: 'all' }] }
+      const tenantOrClauses: any[] = [
+        { role: 'all', tenantId: { $exists: false } },
+        { role: 'all', tenantId: null },
+        { role: 'tenant', tenantId: { $exists: false } },
+        { role: 'tenant', tenantId: null }
+      ]
+      if (user.tenantId) tenantOrClauses.push({ tenantId: user.tenantId })
+      if (user.userId) {
+        tenantOrClauses.push({ tenantId: user.userId })
+        tenantOrClauses.push({ userId: user.userId })
+      }
+      query = { $or: tenantOrClauses }
     } else {
       query = { $or: [{ role: 'landlord' }, { role: 'all' }] }
     }

@@ -12,8 +12,12 @@ import {
   Edit2,
   Users,
   Calendar,
-  Smartphone
+  Smartphone,
+  ShieldCheck,
+  KeyRound,
+  LogOut
 } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
 import {
   propertyInfo,
   propertySettings,
@@ -24,14 +28,74 @@ import {
   fetchPayments,
   fetchAppSettings,
   saveAppSettings,
+  changeMyPassword,
+  logoutAllDevices,
+  logout,
   type AdminAccountSetting
 } from '../data'
 import SideSheet from '../components/SideSheet.vue'
 import PhoneInput from '../components/PhoneInput.vue'
 
+const router = useRouter()
 const isSavingSettings = ref(false)
 const savedMessage = ref('')
 const settingsError = ref('')
+
+// Account Security State
+const isPasswordSheetOpen = ref(false)
+const currentPassword = ref('')
+const newPassword = ref('')
+const confirmPassword = ref('')
+const passwordError = ref('')
+const isUpdatingPassword = ref(false)
+const isRevokingAll = ref(false)
+
+async function handleChangePassword() {
+  passwordError.value = ''
+  if (!currentPassword.value || !newPassword.value) {
+    passwordError.value = 'Enter your current password and a new password.'
+    return
+  }
+  if (newPassword.value.length < 6) {
+    passwordError.value = 'New password must be at least 6 characters.'
+    return
+  }
+  if (newPassword.value !== confirmPassword.value) {
+    passwordError.value = 'New passwords do not match.'
+    return
+  }
+  isUpdatingPassword.value = true
+  try {
+    await changeMyPassword({
+      currentPassword: currentPassword.value,
+      newPassword: newPassword.value,
+      confirmPassword: confirmPassword.value
+    })
+    isPasswordSheetOpen.value = false
+    currentPassword.value = ''
+    newPassword.value = ''
+    confirmPassword.value = ''
+    savedMessage.value = 'Password updated and prior sessions revoked.'
+    setTimeout(() => { savedMessage.value = '' }, 4000)
+  } catch (err: any) {
+    passwordError.value = err.message || 'Could not update password.'
+  } finally {
+    isUpdatingPassword.value = false
+  }
+}
+
+async function handleLogoutAll() {
+  isRevokingAll.value = true
+  try {
+    await logoutAllDevices()
+    logout()
+    router.push('/login')
+  } catch (err: any) {
+    settingsError.value = err.message || 'Could not sign out all devices.'
+  } finally {
+    isRevokingAll.value = false
+  }
+}
 
 // Authorized Admins list (read-only display on page; edited in SideSheet)
 const admins = ref<AdminAccountSetting[]>([])
@@ -405,7 +469,28 @@ async function handleExecuteImport() {
           </div>
         </section>
 
-        <!-- CARD 3: Data Migration Trigger Card -->
+        <!-- CARD 3: Account Security (Change Password & Sign Out All Devices) -->
+        <section class="panel" style="padding: 20px 24px; display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <ShieldCheck :size="18" style="color: #0f172a;" />
+            <strong style="font-size: 0.94rem; color: #172033;">Account Security</strong>
+          </div>
+          <small style="font-size: 0.78rem; color: #64748b;">
+            Update your admin password or revoke active login sessions on all other devices.
+          </small>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button type="button" class="secondary-button" style="font-size: 0.78rem;" @click="passwordError = ''; isPasswordSheetOpen = true">
+              <KeyRound :size="13" />
+              <span>Change Password</span>
+            </button>
+            <button type="button" class="secondary-button" style="font-size: 0.78rem; color: #b91c1c;" :disabled="isRevokingAll" @click="handleLogoutAll">
+              <LogOut :size="13" />
+              <span>{{ isRevokingAll ? 'Revoking...' : 'Sign Out All Devices' }}</span>
+            </button>
+          </div>
+        </section>
+
+        <!-- CARD 4: Data Migration Trigger Card -->
         <section class="panel" style="padding: 20px 24px; display: flex; align-items: center; justify-content: space-between; gap: 14px;">
           <div>
             <strong style="font-size: 0.92rem; color: #172033; display: block;">Historical Data Import</strong>
@@ -418,6 +503,41 @@ async function handleExecuteImport() {
         </section>
       </div>
     </div>
+
+    <!-- SHEET 0: Change Password -->
+    <SideSheet
+      :open="isPasswordSheetOpen"
+      title="Change Password"
+      subtitle="Updating your password revokes all other active sessions."
+      width="440px"
+      @close="isPasswordSheetOpen = false"
+    >
+      <form @submit.prevent="handleChangePassword">
+        <div v-if="passwordError" class="auth-alert error">
+          <AlertCircle :size="15" class="auth-alert-icon" />
+          <span>{{ passwordError }}</span>
+        </div>
+        <div class="form-field">
+          <label>Current Password</label>
+          <input v-model="currentPassword" type="password" required placeholder="Enter current password" />
+        </div>
+        <div class="form-field">
+          <label>New Password</label>
+          <input v-model="newPassword" type="password" required minlength="6" placeholder="At least 6 characters" />
+        </div>
+        <div class="form-field">
+          <label>Confirm New Password</label>
+          <input v-model="confirmPassword" type="password" required minlength="6" placeholder="Re-enter new password" />
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; padding-top: 14px; border-top: 1px solid #eef2f6;">
+          <button type="button" class="secondary-button" @click="isPasswordSheetOpen = false">Cancel</button>
+          <button type="submit" class="primary-button" :disabled="isUpdatingPassword">
+            <KeyRound :size="14" />
+            <span>{{ isUpdatingPassword ? 'Updating...' : 'Update Password' }}</span>
+          </button>
+        </div>
+      </form>
+    </SideSheet>
 
     <!-- SHEET 1: Edit Property & Rent Due Date -->
     <SideSheet

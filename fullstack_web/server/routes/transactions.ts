@@ -7,33 +7,73 @@ import { broadcastServerEvent } from '../events'
 import { runTenantLedgerReconciliation } from './tenants'
 import { notifyTenantSms } from '../services/sms'
 import { recordPaymentAgainstActiveLink } from '../services/reminders'
+import { logAuditEvent } from '../services/audit'
+import { parsePositiveAmount, isIsoDate, cleanString } from '../middleware/validate'
 
 const router = Router()
 
-// GET /api/transactions (Landlord sees all; Tenant sees ONLY their own transactions)
+// GET /api/transactions (Landlord sees all; Tenant sees ONLY their own transactions; supports ?page, ?limit, ?search, ?status)
 router.get('/transactions', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const db = getDb()
     const user = req.user!
-    let query: any = {}
+    const conditions: any[] = []
 
     if (user.role === 'tenant') {
       const orClauses: any[] = []
       if (user.tenantId) orClauses.push({ tenantId: user.tenantId })
       if (user.userId) orClauses.push({ tenantId: user.userId })
-      if (orClauses.length === 0) return res.json([])
-      query = { $or: orClauses }
+      if (orClauses.length === 0) {
+        res.setHeader('X-Total-Count', '0')
+        return res.json([])
+      }
+      conditions.push({ $or: orClauses })
     } else {
-      if (req.query.tenantId) query.tenantId = String(req.query.tenantId)
-      if (req.query.unitNumber) query.unitNumber = String(req.query.unitNumber)
+      if (req.query.tenantId) conditions.push({ tenantId: String(req.query.tenantId) })
+      if (req.query.unitNumber) conditions.push({ unitNumber: String(req.query.unitNumber) })
     }
 
-    const transactions = await db.collection('transactions')
+    if (req.query.status && req.query.status !== 'all') {
+      conditions.push({ status: String(req.query.status) })
+    }
+
+    const search = cleanString(req.query.search, 120)
+    if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const regex = new RegExp(escaped, 'i')
+      conditions.push({
+        $or: [
+          { reference: regex },
+          { tenantName: regex },
+          { unitNumber: regex },
+          { phoneNumber: regex },
+          { payerName: regex }
+        ]
+      })
+    }
+
+    const query = conditions.length === 0 ? {} : (conditions.length === 1 ? conditions[0] : { $and: conditions })
+
+    const rawPage = req.query.page ? Number(req.query.page) : 0
+    const rawLimit = req.query.limit ? Number(req.query.limit) : 0
+    const hasPagination = (Number.isFinite(rawPage) && rawPage > 0) || (Number.isFinite(rawLimit) && rawLimit > 0)
+
+    const total = await db.collection('transactions').countDocuments(query)
+    res.setHeader('X-Total-Count', String(total))
+
+    let cursor = db.collection('transactions')
       .find(query, { projection: { _id: 0 } })
       .sort({ date: -1, timestamp: -1 })
-      .toArray()
 
-    logServerEvent('PAYMENTS', `Loaded ${transactions.length} transactions for ${user.role}`)
+    if (hasPagination) {
+      const page = Math.max(1, Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1)
+      const limit = Math.min(200, Math.max(1, Number.isFinite(rawLimit) && rawLimit > 0 ? Math.floor(rawLimit) : 50))
+      cursor = cursor.skip((page - 1) * limit).limit(limit)
+    }
+
+    const transactions = await cursor.toArray()
+
+    logServerEvent('PAYMENTS', `Loaded ${transactions.length}/${total} transactions for ${user.role}`)
     res.json(transactions)
   } catch (err: any) {
     res.status(500).json({ error: err.message })
@@ -84,13 +124,16 @@ router.post('/transactions', authenticateToken, async (req: AuthRequest, res: Re
       payerName: reqPayerName
     } = req.body
 
-    const numericAmount = Number(amount)
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0 || numericAmount > 10000000) {
+    const numericAmount = parsePositiveAmount(amount)
+    if (numericAmount === null) {
       return res.status(400).json({ error: 'Valid positive amount is required.' })
+    }
+    if (isLandlord && date && !isIsoDate(date)) {
+      return res.status(400).json({ error: 'Payment date must be a valid YYYY-MM-DD date.' })
     }
 
     // Tenant submissions MUST include a real M-Pesa transaction code and can ONLY apply to their own account
-    const rawRef = reference ? String(reference).trim().toUpperCase() : ''
+    const rawRef = reference ? cleanString(reference, 64).toUpperCase() : ''
     if (!isLandlord && rawRef.length < 5) {
       return res.status(400).json({ error: 'A valid M-Pesa transaction code (at least 5 characters) is required for manual Paybill verification.' })
     }
@@ -177,8 +220,27 @@ router.post('/transactions', authenticateToken, async (req: AuthRequest, res: Re
       reconciledBy: txReconciled ? (req.body.reconciledBy || `${user.name} (Manual Entry)`) : null,
       submittedByRole: user.role
     }
-    await db.collection('transactions').insertOne(newTx)
+    try {
+      await db.collection('transactions').insertOne(newTx)
+    } catch (dupErr: any) {
+      if (dupErr?.code === 11000) {
+        const dupTx = await db.collection('transactions').findOne({ reference: ref }, { projection: { _id: 0 } })
+        if (!isLandlord && dupTx && dupTx.tenantId !== tenant?.id) {
+          return res.status(409).json({ error: `Transaction reference ${ref} has already been recorded.` })
+        }
+        return res.json(dupTx || { error: `Duplicate reference ${ref}` })
+      }
+      throw dupErr
+    }
     logServerEvent('PAYMENTS', `Recorded ${txStatus} payment: KES ${newTx.amount.toLocaleString()} for Unit ${newTx.unitNumber} [Ref: ${ref}, by: ${user.role}]`)
+    await logAuditEvent({
+      actor: req.user,
+      action: isLandlord ? 'payment.record' : 'payment.claim',
+      entityType: 'transaction',
+      entityId: newTx.id,
+      summary: `${isLandlord ? 'Recorded' : 'Submitted claim for'} KES ${newTx.amount.toLocaleString()} for ${newTx.tenantName} (Unit ${newTx.unitNumber || 'N/A'}, Ref: ${ref})`,
+      meta: { amount: newTx.amount, reference: ref, status: txStatus, unitNumber: newTx.unitNumber }
+    })
 
     // Only credit balance & update payment links if verified (Landlord entry)
     let updatedLease = lease
@@ -366,6 +428,13 @@ router.post('/transactions/reconcile', authenticateToken, requireRole(['landlord
     }
 
     logServerEvent('PAYMENTS', `Reconciled transaction ${transactionId} to ${tenant.name} in MongoDB`)
+    await logAuditEvent({
+      actor: req.user,
+      action: 'payment.reconcile',
+      entityType: 'transaction',
+      entityId: String(transactionId),
+      summary: `Reconciled payment ${result?.reference || transactionId} (KES ${Number(result?.amount || 0).toLocaleString()}) to ${tenant.name} (Unit ${resolvedUnitNumber || 'N/A'})`
+    })
     res.json(result)
   } catch (err: any) {
     res.status(500).json({ error: err.message })

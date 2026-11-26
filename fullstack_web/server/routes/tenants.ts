@@ -6,6 +6,8 @@ import { generateHexObjectId } from '../config'
 import { logServerEvent } from '../middleware/logger'
 import { authenticateToken, requireRole, AuthRequest } from '../middleware/auth'
 import { getRentDueDay } from '../services/settings'
+import { logAuditEvent } from '../services/audit'
+import { parsePositiveAmount, cleanString, isValidEnum, isValidEmail } from '../middleware/validate'
 
 // Dynamic next payment due date calculator
 function computeNextPaymentDueDate(dueDay: number = 5): string {
@@ -319,6 +321,27 @@ export async function runTenantLedgerReconciliation(
     }
   }
 
+  // 1b. Load manual ledger adjustments (extra charges / credits / waivers — no automatic late fees)
+  const allAdjustments = await db.collection('ledger_adjustments')
+    .find({ tenantId: id })
+    .sort({ createdAt: 1 })
+    .toArray()
+
+  const adjByLeaseId = new Map<string, any[]>()
+  for (const l of leases) adjByLeaseId.set(l.id, [])
+  const unattachedAdjustments: any[] = []
+  for (const adj of allAdjustments) {
+    const matched =
+      (adj.leaseId ? leases.find((l: any) => l.id === adj.leaseId) : null) ||
+      (adj.unitNumber ? leases.find((l: any) => l.unitNumber === adj.unitNumber) : null) ||
+      primaryLease
+    if (matched) {
+      adjByLeaseId.get(matched.id)!.push(adj)
+    } else {
+      unattachedAdjustments.push(adj)
+    }
+  }
+
   let aggregatePaid = 0
   let aggregateBilled = 0
   let aggregateBalance = 0
@@ -327,17 +350,27 @@ export async function runTenantLedgerReconciliation(
   let primaryUpdatedLease: any = null
 
   if (leases.length === 0) {
-    // Tenant has no leases: any reconciled payments count as account credit
-    aggregatePaid = allTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
-    aggregateCredit = aggregatePaid
+    // Tenant has no leases: any reconciled payments & credits count as account credit minus charges
+    const basePaid = allTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
+    const adjCharges = unattachedAdjustments.filter((a: any) => a.type === 'charge').reduce((s, a) => s + Number(a.amount || 0), 0)
+    const adjCredits = unattachedAdjustments.filter((a: any) => a.type === 'credit').reduce((s, a) => s + Number(a.amount || 0), 0)
+    aggregatePaid = basePaid + adjCredits
+    aggregateBilled = adjCharges
+    const diff = aggregatePaid - aggregateBilled
+    aggregateBalance = diff < 0 ? Math.abs(diff) : 0
+    aggregateCredit = diff > 0 ? diff : 0
   } else {
     for (const lease of leases) {
       const leaseTxs = txByLeaseId.get(lease.id) || []
-      const leasePaid = leaseTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
+      const leaseAdjs = adjByLeaseId.get(lease.id) || []
+      const leaseCharges = leaseAdjs.filter((a: any) => a.type === 'charge').reduce((s, a) => s + Number(a.amount || 0), 0)
+      const leaseCredits = leaseAdjs.filter((a: any) => a.type === 'credit').reduce((s, a) => s + Number(a.amount || 0), 0)
+      const leasePaidRaw = leaseTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
+      const leasePaid = leasePaidRaw + leaseCredits
       const monthlyRent = Number(lease.monthlyRent || 0)
       const depositAmount = Number(lease.depositAmount !== undefined ? lease.depositAmount : monthlyRent)
       const monthsBilled = computeBillableMonthsForLease(lease.startDate || tenant.moveInDate, lease.endDate)
-      const leaseBilled = depositAmount + (monthsBilled * monthlyRent)
+      const leaseBilled = depositAmount + (monthsBilled * monthlyRent) + leaseCharges
 
       const depositPaid = leasePaid >= depositAmount
       const depositStatus = depositPaid ? 'paid' : (leasePaid > 0 ? 'partially_paid' : 'pending')
@@ -477,6 +510,162 @@ export async function runTenantLedgerReconciliation(
   }
 }
 
+// POST /api/tenants/reconcile-all (Landlord only — single-request batch reconciliation across all residents)
+router.post('/tenants/reconcile-all', authenticateToken, requireRole(['landlord']), async (req: AuthRequest, res: Response) => {
+  try {
+    const db = getDb()
+    const tenants = await db.collection('tenants').find({}, { projection: { id: 1, name: 1 } }).toArray()
+    let reconciledCount = 0
+    let totalArrears = 0
+    let totalCredit = 0
+    const errors: string[] = []
+
+    for (const t of tenants) {
+      try {
+        const r = await runTenantLedgerReconciliation(String(t.id))
+        reconciledCount++
+        totalArrears += Number(r.summary?.balance || 0)
+        totalCredit += Number(r.summary?.accountCredit || 0)
+      } catch (e: any) {
+        errors.push(`${t.name || t.id}: ${e.message}`)
+      }
+    }
+
+    logServerEvent('RECONCILE', `Batch reconciled ${reconciledCount}/${tenants.length} residents (Arrears: KES ${totalArrears}, Credit: KES ${totalCredit})`)
+    await logAuditEvent({
+      actor: req.user,
+      action: 'ledger.reconcile_all',
+      entityType: 'ledger',
+      summary: `Batch reconciled ${reconciledCount} resident ledgers (Total Arrears: KES ${Math.round(totalArrears).toLocaleString()})`,
+      meta: { reconciledCount, totalTenants: tenants.length, totalArrears, totalCredit, errorCount: errors.length }
+    })
+
+    res.json({
+      ok: true,
+      reconciledCount,
+      totalTenants: tenants.length,
+      totalArrears,
+      totalCredit,
+      errors
+    })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/tenants/:id/adjustments (Landlord or own tenant)
+router.get('/tenants/:id/adjustments', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const db = getDb()
+    const id = String(req.params.id)
+    const user = req.user!
+    if (user.role === 'tenant' && user.tenantId !== id && user.userId !== id) {
+      return res.status(403).json({ error: 'Access denied to these ledger adjustments.' })
+    }
+    const items = await db.collection('ledger_adjustments')
+      .find({ tenantId: id }, { projection: { _id: 0 } })
+      .sort({ createdAt: -1 })
+      .toArray()
+    res.json(items)
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/tenants/:id/adjustments (Landlord only — extra charge like water/garbage/damage OR credit note/waiver)
+router.post('/tenants/:id/adjustments', authenticateToken, requireRole(['landlord']), async (req: AuthRequest, res: Response) => {
+  try {
+    const db = getDb()
+    const id = String(req.params.id)
+    const tenant = await db.collection('tenants').findOne({ id })
+    if (!tenant) return res.status(404).json({ error: 'Tenant not found.' })
+
+    const { type, amount, category, reason, leaseId, unitNumber } = req.body
+    if (!isValidEnum(type, ['charge', 'credit'] as const)) {
+      return res.status(400).json({ error: 'Adjustment type must be "charge" or "credit".' })
+    }
+    const validAmount = parsePositiveAmount(amount)
+    if (validAmount === null) {
+      return res.status(400).json({ error: 'Adjustment amount must be a valid positive number.' })
+    }
+    const cleanReason = cleanString(reason, 240)
+    if (!cleanReason) {
+      return res.status(400).json({ error: 'A clear reason is required for every ledger adjustment.' })
+    }
+    const cleanCategory = cleanString(category || (type === 'charge' ? 'utility' : 'waiver'), 60)
+
+    let resolvedLeaseId = leaseId ? String(leaseId) : (tenant.currentLeaseId || null)
+    let resolvedUnitNumber = unitNumber ? String(unitNumber) : (tenant.currentUnitNumber || '')
+    if (resolvedLeaseId) {
+      const leaseDoc = await db.collection('leases').findOne({ id: resolvedLeaseId, tenantId: id })
+      if (leaseDoc) {
+        resolvedUnitNumber = leaseDoc.unitNumber || resolvedUnitNumber
+      }
+    }
+
+    const nowIso = new Date().toISOString()
+    const adjustment = {
+      id: generateHexObjectId(),
+      tenantId: id,
+      tenantName: tenant.name,
+      leaseId: resolvedLeaseId,
+      unitNumber: resolvedUnitNumber,
+      type,
+      category: cleanCategory,
+      amount: validAmount,
+      reason: cleanReason,
+      createdBy: req.user?.name || req.user?.email || 'Admin',
+      createdAt: nowIso
+    }
+
+    await db.collection('ledger_adjustments').insertOne(adjustment)
+    const recResult = await runTenantLedgerReconciliation(id, {
+      targetLeaseId: resolvedLeaseId,
+      targetUnitNumber: resolvedUnitNumber
+    })
+
+    logServerEvent('RECONCILE', `Added ${type} adjustment of KES ${validAmount} for ${tenant.name}: ${cleanReason}`)
+    await logAuditEvent({
+      actor: req.user,
+      action: `ledger.adjustment_${type}`,
+      entityType: 'ledger_adjustment',
+      entityId: adjustment.id,
+      summary: `Posted ${type === 'charge' ? 'Extra Charge' : 'Credit / Waiver'} of KES ${validAmount.toLocaleString()} on ${tenant.name} (Unit ${resolvedUnitNumber || 'N/A'}): ${cleanReason}`,
+      meta: { tenantId: id, type, amount: validAmount, category: cleanCategory, reason: cleanReason }
+    })
+
+    res.status(201).json({ ok: true, adjustment, reconciliation: recResult })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// DELETE /api/tenants/:id/adjustments/:adjId (Landlord only)
+router.delete('/tenants/:id/adjustments/:adjId', authenticateToken, requireRole(['landlord']), async (req: AuthRequest, res: Response) => {
+  try {
+    const db = getDb()
+    const id = String(req.params.id)
+    const adjId = String(req.params.adjId)
+    const existing = await db.collection('ledger_adjustments').findOne({ id: adjId, tenantId: id })
+    if (!existing) return res.status(404).json({ error: 'Ledger adjustment not found.' })
+
+    await db.collection('ledger_adjustments').deleteOne({ id: adjId, tenantId: id })
+    const recResult = await runTenantLedgerReconciliation(id)
+
+    await logAuditEvent({
+      actor: req.user,
+      action: 'ledger.adjustment_delete',
+      entityType: 'ledger_adjustment',
+      entityId: adjId,
+      summary: `Removed ${existing.type} adjustment of KES ${Number(existing.amount || 0).toLocaleString()} for ${existing.tenantName || id} (${existing.reason})`
+    })
+
+    res.json({ ok: true, reconciliation: recResult })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // POST /api/tenants/:id/reconcile (Landlord or own tenant only)
 router.post('/tenants/:id/reconcile', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
@@ -514,6 +703,13 @@ router.delete('/tenants/:id', authenticateToken, requireRole(['landlord']), asyn
     await db.collection('tenants').deleteOne({ id })
     await db.collection('users').deleteOne({ email: tenant.email, role: 'tenant' })
     logServerEvent('TENANTS', `Deleted resident ${tenant.name} (${id}) and access credentials from MongoDB`)
+    await logAuditEvent({
+      actor: req.user,
+      action: 'tenant.delete',
+      entityType: 'tenant',
+      entityId: id,
+      summary: `Deleted resident profile ${tenant.name} (${tenant.email})`
+    })
     res.json({ success: true, message: `Resident ${tenant.name} deleted successfully.` })
   } catch (err: any) {
     res.status(500).json({ error: err.message })

@@ -22,7 +22,6 @@ class LeaseDetailsPage extends StatefulWidget {
 
 class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
   late LeaseModel _lease;
-  bool _isTerminating = false;
 
   @override
   void initState() {
@@ -38,43 +37,13 @@ class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
   }
 
   Future<void> _handleTerminate() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: C.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        title: Text('Terminate Lease', style: flex(14.5, color: C.textPrimary)),
-        content: Text(
-          'End lease ${_lease.leaseNumber} for Unit ${_lease.unitNumber}?',
-          style: sans(12.5, color: C.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text('Cancel', style: sans(12, color: C.textMuted, weight: FontWeight.w600)),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: C.roseText, foregroundColor: Colors.white),
-            child: Text('Terminate', style: sans(12, color: Colors.white, weight: FontWeight.w600)),
-          ),
-        ],
-      ),
+    showMoveOutSettlementSheet(
+      context,
+      lease: _lease,
+      onTerminated: () {
+        if (mounted) Navigator.pop(context, true);
+      },
     );
-
-    if (confirm != true) return;
-
-    setState(() => _isTerminating = true);
-    final res = await ApiService.terminateLease(_lease.id);
-    if (!mounted) return;
-    setState(() => _isTerminating = false);
-
-    if (res['success'] == true) {
-      showAppSnackBar(context, 'Lease terminated.');
-      Navigator.pop(context, true);
-    } else {
-      showAppSnackBar(context, res['error']?.toString() ?? 'Could not terminate lease.', isError: true);
-    }
   }
 
   @override
@@ -210,11 +179,9 @@ class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
             SizedBox(
               height: 43,
               child: OutlinedButton(
-                onPressed: _isTerminating ? null : _handleTerminate,
+                onPressed: _handleTerminate,
                 style: OutlinedButton.styleFrom(side: const BorderSide(color: C.roseBorder)),
-                child: _isTerminating
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: C.roseText))
-                    : Text('Terminate Lease', style: sans(12.5, color: C.roseText, weight: FontWeight.w600)),
+                child: Text('Terminate & Settle Lease', style: sans(12.5, color: C.roseText, weight: FontWeight.w600)),
               ),
             ),
           ],

@@ -32,6 +32,10 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
   bool _isReconciling = false;
 
   final ScrollController _ledgerScrollCtrl = ScrollController();
+  final TextEditingController _propertySearchCtrl = TextEditingController();
+  final TextEditingController _ledgerSearchCtrl = TextEditingController();
+  String _propertySearch = '';
+  String _ledgerSearch = '';
   int _ledgerPage = 1;
   bool _isLoadingMoreTx = false;
   bool _hasMoreTx = true;
@@ -48,6 +52,8 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
   void dispose() {
     ApiService.realtimeUpdateNotifier.removeListener(_onRealtimeUpdate);
     _ledgerScrollCtrl.dispose();
+    _propertySearchCtrl.dispose();
+    _ledgerSearchCtrl.dispose();
     super.dispose();
   }
 
@@ -136,16 +142,19 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
   }
 
   Future<void> _handleReconcile() async {
-    if (_data == null || _data!.tenants.isEmpty) return;
+    if (_data == null) return;
     setState(() => _isReconciling = true);
 
     try {
-      for (final t in _data!.tenants) {
-        await ApiService.reconcileTenant(t.id);
-      }
+      final res = await ApiService.reconcileAllTenants();
       await _loadPortfolio(silent: true);
       if (mounted) {
-        showAppSnackBar(context, 'Balances reconciled.');
+        if (res['success'] == true) {
+          final count = res['reconciledCount'] ?? _data!.tenants.length;
+          showAppSnackBar(context, 'Reconciled $count resident ledger${count == 1 ? '' : 's'}.');
+        } else {
+          showAppSnackBar(context, res['error']?.toString() ?? 'Reconciliation failed.', isError: true);
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -207,6 +216,7 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
       body: _currentNavIndex == 4
           ? ProfileSettingsPage(
               showBackButton: false,
+              tenants: _data?.tenants ?? const [],
               onDataChanged: () => _loadPortfolio(silent: true),
             )
           : _isLoading
@@ -344,9 +354,9 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
                 ],
               ),
 
-              // 2. Upgraded 3-Column Circular Action Grid
+              // 2. Upgraded 4-Column Circular Action Grid (Collect Pay, Unpaid List, Add Unit, New Ticket)
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
                 child: Row(
                   children: [
                     Expanded(
@@ -357,7 +367,29 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
                         onTap: () => showAdminCollectPaymentSheet(
                           context,
                           tenants: d.tenants,
+                          leases: d.leases,
                           onComplete: () => _loadPortfolio(silent: true),
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: _circularQuickAction(
+                        icon: LapisIconName.alertTriangle,
+                        label: 'Unpaid',
+                        badgeCount: d.tenants.where((t) => t.hasArrears).length,
+                        onTap: () => showUnpaidTenantsSheet(
+                          context,
+                          tenants: d.tenants,
+                          onSelectCollect: (t) => showAdminCollectPaymentSheet(
+                            context,
+                            tenants: d.tenants,
+                            leases: d.leases,
+                            initialTenant: t,
+                            onComplete: () => _loadPortfolio(silent: true),
+                          ),
+                          onSelectDetails: (t) => Navigator.of(context)
+                              .push(MaterialPageRoute(builder: (_) => TenantDetailsPage(tenant: t)))
+                              .then((_) => _loadPortfolio(silent: true)),
                         ),
                       ),
                     ),
@@ -407,17 +439,7 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
                 ),
               ),
 
-              // 4. Polished Residents Preview
-              if (d.tenants.isNotEmpty) ...[
-                _sectionHeader(
-                  'Residents',
-                  actionLabel: 'Manage',
-                  onAction: () => _goToPropertySegment(1),
-                ),
-                ...d.tenants.take(3).map((t) => _buildResidentTile(t)),
-              ],
-
-              // 5. Minimal Recent Payments (Name, Unit, Amount only — tap for full receipt)
+              // 4. Recent Payments Only (Minimal Dashboard — Residents managed in Property tab / Unpaid sheet)
               _sectionHeader(
                 'Recent Payments',
                 actionLabel: 'View all',
@@ -429,7 +451,7 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
                   child: Text('No payments yet.', style: sans(12, color: C.textMuted)),
                 )
               else
-                ...d.transactions.take(4).map((tx) => _buildMinimalDashboardPaymentTile(tx, d.tenants)),
+                ...d.transactions.take(6).map((tx) => _buildMinimalDashboardPaymentTile(tx, d.tenants)),
             ]),
           ),
         ),
@@ -441,6 +463,7 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
     required LapisIconName icon,
     required String label,
     bool isPrimary = false,
+    int badgeCount = 0,
     required VoidCallback onTap,
   }) {
     return InkWell(
@@ -451,35 +474,57 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: isPrimary ? C.navy : C.surface,
-                shape: BoxShape.circle,
-                border: isPrimary ? null : Border.all(color: C.border),
-                boxShadow: isPrimary
-                    ? [
-                        BoxShadow(
-                          color: C.navy.withValues(alpha: 0.16),
-                          blurRadius: 10,
-                          offset: const Offset(0, 3),
-                        ),
-                      ]
-                    : null,
-              ),
-              child: Center(
-                child: LapisIcon(
-                  icon,
-                  size: 17,
-                  color: isPrimary ? Colors.white : C.textSecondary,
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: isPrimary ? C.navy : C.surface,
+                    shape: BoxShape.circle,
+                    border: isPrimary ? null : Border.all(color: C.border),
+                    boxShadow: isPrimary
+                        ? [
+                            BoxShadow(
+                              color: C.navy.withValues(alpha: 0.16),
+                              blurRadius: 10,
+                              offset: const Offset(0, 3),
+                            ),
+                          ]
+                        : null,
+                  ),
+                  child: Center(
+                    child: LapisIcon(
+                      icon,
+                      size: 17,
+                      color: isPrimary ? Colors.white : C.textSecondary,
+                    ),
+                  ),
                 ),
-              ),
+                if (badgeCount > 0)
+                  Positioned(
+                    right: -3,
+                    top: -3,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                      decoration: BoxDecoration(
+                        color: C.roseText,
+                        borderRadius: BorderRadius.circular(99),
+                        border: Border.all(color: C.canvas, width: 1.5),
+                      ),
+                      child: Text(
+                        '$badgeCount',
+                        style: sans(9, color: Colors.white, weight: FontWeight.w700, fontFeatures: kTabularNums),
+                      ),
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(height: 6),
             Text(
               label,
-              style: sans(12, color: C.textPrimary, weight: FontWeight.w500),
+              style: sans(11.5, color: C.textPrimary, weight: FontWeight.w500),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -708,11 +753,11 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
             const SizedBox(width: 4),
           ],
           bottom: PreferredSize(
-            preferredSize: const Size.fromHeight(50),
+            preferredSize: const Size.fromHeight(96),
             child: Column(
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 2, 16, 10),
+                  padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
                   child: Container(
                     padding: const EdgeInsets.all(3),
                     decoration: BoxDecoration(
@@ -729,6 +774,17 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
                     ),
                   ),
                 ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: _compactSearchField(
+                    controller: _propertySearchCtrl,
+                    hint: _propertySegment == 0
+                        ? 'Search unit number or type...'
+                        : (_propertySegment == 1 ? 'Search resident name, phone, unit...' : 'Search lease, resident, unit...'),
+                    value: _propertySearch,
+                    onChanged: (v) => setState(() => _propertySearch = v.trim().toLowerCase()),
+                  ),
+                ),
                 const Divider(height: 1, color: C.borderLight),
               ],
             ),
@@ -741,6 +797,61 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
         else
           _buildLeasesSliver(d, vacantUnits),
       ],
+    );
+  }
+
+  Widget _compactSearchField({
+    required TextEditingController controller,
+    required String hint,
+    required String value,
+    required ValueChanged<String> onChanged,
+  }) {
+    return SizedBox(
+      height: 36,
+      child: TextField(
+        controller: controller,
+        onChanged: onChanged,
+        style: sans(12.5, color: C.textPrimary),
+        decoration: InputDecoration(
+          hintText: hint,
+          hintStyle: sans(12, color: C.textMuted),
+          prefixIcon: const Padding(
+            padding: EdgeInsets.only(left: 10, right: 6),
+            child: LapisIcon(LapisIconName.search, size: 15, color: C.textMuted),
+          ),
+          prefixIconConstraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          suffixIcon: value.isNotEmpty
+              ? GestureDetector(
+                  onTap: () {
+                    controller.clear();
+                    onChanged('');
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    child: Center(
+                      widthFactor: 1,
+                      child: Text('Clear', style: sans(11, color: C.navy, weight: FontWeight.w600)),
+                    ),
+                  ),
+                )
+              : null,
+          filled: true,
+          fillColor: C.canvas,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(9),
+            borderSide: const BorderSide(color: C.border),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(9),
+            borderSide: const BorderSide(color: C.border),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(9),
+            borderSide: const BorderSide(color: C.navy, width: 1.2),
+          ),
+        ),
+      ),
     );
   }
 
@@ -772,17 +883,27 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
   }
 
   Widget _buildUnitsSliver(DashboardData d) {
-    if (d.units.isEmpty) {
+    final q = _propertySearch;
+    final items = q.isEmpty
+        ? d.units
+        : d.units.where((u) {
+            return u.unitNumber.toLowerCase().contains(q) ||
+                u.type.toLowerCase().contains(q) ||
+                formatUnitTypeLabel(u.type).toLowerCase().contains(q) ||
+                (u.isOccupied ? 'occupied' : 'vacant').contains(q);
+          }).toList();
+
+    if (items.isEmpty) {
       return SliverFillRemaining(
-        child: Center(child: Text('No units yet.', style: sans(12.5, color: C.textMuted))),
+        child: Center(child: Text(q.isEmpty ? 'No units yet.' : 'No matching units.', style: sans(12.5, color: C.textMuted))),
       );
     }
     return SliverPadding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       sliver: SliverList.builder(
-        itemCount: d.units.length,
+        itemCount: items.length,
         itemBuilder: (_, i) {
-          final u = d.units[i];
+          final u = items[i];
           final occ = u.isOccupied;
           return OrbixListTile(
             icon: LapisIconName.building,
@@ -803,32 +924,52 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
   }
 
   Widget _buildTenantsSliver(DashboardData d) {
-    if (d.tenants.isEmpty) {
+    final q = _propertySearch;
+    final items = q.isEmpty
+        ? d.tenants
+        : d.tenants.where((t) {
+            return t.name.toLowerCase().contains(q) ||
+                t.email.toLowerCase().contains(q) ||
+                t.phone.toLowerCase().contains(q) ||
+                t.currentUnitNumber.toLowerCase().contains(q);
+          }).toList();
+
+    if (items.isEmpty) {
       return SliverFillRemaining(
-        child: Center(child: Text('No residents yet.', style: sans(12.5, color: C.textMuted))),
+        child: Center(child: Text(q.isEmpty ? 'No residents yet.' : 'No matching residents.', style: sans(12.5, color: C.textMuted))),
       );
     }
     return SliverPadding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       sliver: SliverList.builder(
-        itemCount: d.tenants.length,
-        itemBuilder: (_, i) => _buildResidentTile(d.tenants[i]),
+        itemCount: items.length,
+        itemBuilder: (_, i) => _buildResidentTile(items[i]),
       ),
     );
   }
 
   Widget _buildLeasesSliver(DashboardData d, List<UnitModel> vacantUnits) {
-    if (d.leases.isEmpty) {
+    final q = _propertySearch;
+    final items = q.isEmpty
+        ? d.leases
+        : d.leases.where((l) {
+            return l.unitNumber.toLowerCase().contains(q) ||
+                l.tenantName.toLowerCase().contains(q) ||
+                l.leaseNumber.toLowerCase().contains(q) ||
+                l.status.toLowerCase().contains(q);
+          }).toList();
+
+    if (items.isEmpty) {
       return SliverFillRemaining(
-        child: Center(child: Text('No leases yet.', style: sans(12.5, color: C.textMuted))),
+        child: Center(child: Text(q.isEmpty ? 'No leases yet.' : 'No matching leases.', style: sans(12.5, color: C.textMuted))),
       );
     }
     return SliverPadding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       sliver: SliverList.builder(
-        itemCount: d.leases.length,
+        itemCount: items.length,
         itemBuilder: (_, i) {
-          final l = d.leases[i];
+          final l = items[i];
           return OrbixListTile(
             icon: LapisIconName.fileText,
             iconColor: C.navy,
@@ -849,8 +990,18 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
     );
   }
 
-  // --- TAB 2: LEDGER (Full Non-Truncated M-Pesa Codes) ---
+  // --- TAB 2: LEDGER (Full Non-Truncated M-Pesa Codes + Live Search) ---
   Widget _buildLedgerTab(DashboardData d) {
+    final q = _ledgerSearch;
+    final filteredTx = q.isEmpty
+        ? _pagedTransactions
+        : _pagedTransactions.where((tx) {
+            return tx.reference.toLowerCase().contains(q) ||
+                (tx.tenantName ?? '').toLowerCase().contains(q) ||
+                (tx.unitNumber ?? '').toLowerCase().contains(q) ||
+                tx.amount.toString().contains(q);
+          }).toList();
+
     return CustomScrollView(
       controller: _ledgerScrollCtrl,
       physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
@@ -867,34 +1018,53 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
               onPressed: () => showAdminCollectPaymentSheet(
                 context,
                 tenants: d.tenants,
+                leases: d.leases,
                 onComplete: () => _loadPortfolio(silent: true),
               ),
               child: Text('+ Collect', style: sans(12.5, color: C.navy, weight: FontWeight.w700)),
             ),
             const SizedBox(width: 4),
           ],
-          bottom: const PreferredSize(
-            preferredSize: Size.fromHeight(1),
-            child: Divider(height: 1, color: C.borderLight),
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(48),
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: _compactSearchField(
+                    controller: _ledgerSearchCtrl,
+                    hint: 'Search resident, unit or M-Pesa code...',
+                    value: _ledgerSearch,
+                    onChanged: (v) => setState(() => _ledgerSearch = v.trim().toLowerCase()),
+                  ),
+                ),
+                const Divider(height: 1, color: C.borderLight),
+              ],
+            ),
           ),
         ),
-        if (_pagedTransactions.isEmpty)
+        if (filteredTx.isEmpty)
           SliverFillRemaining(
-            child: Center(child: Text('No transactions yet.', style: sans(12.5, color: C.textMuted))),
+            child: Center(
+              child: Text(
+                q.isEmpty ? 'No transactions yet.' : 'No matching transactions.',
+                style: sans(12.5, color: C.textMuted),
+              ),
+            ),
           )
         else
           SliverPadding(
             padding: const EdgeInsets.symmetric(vertical: 8),
             sliver: SliverList.builder(
-              itemCount: _pagedTransactions.length + (_hasMoreTx ? 1 : 0),
+              itemCount: filteredTx.length + (q.isEmpty && _hasMoreTx ? 1 : 0),
               itemBuilder: (_, i) {
-                if (i == _pagedTransactions.length) {
+                if (i == filteredTx.length) {
                   return const Padding(
                     padding: EdgeInsets.all(14),
                     child: Center(child: CircularProgressIndicator(strokeWidth: 2, color: C.navy)),
                   );
                 }
-                return _buildLedgerPaymentTile(_pagedTransactions[i], d.tenants);
+                return _buildLedgerPaymentTile(filteredTx[i], d.tenants);
               },
             ),
           ),
