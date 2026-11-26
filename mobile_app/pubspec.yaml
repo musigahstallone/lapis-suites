@@ -1,0 +1,57 @@
+name: lapis_suites
+description: "Lapis Suites Property Management Mobile Application"
+publish_to: 'none'
+
+version: 2.1.0+3
+
+environment:
+  sdk: ^3.14.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  http: ^1.2.2
+  shared_preferences: ^2.3.3
+  flutter_local_notifications: ^18.0.1
+  app_links: ^6.3.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  fonts:
+    - family: GoogleSans
+      fonts:
+        - asset: assets/fonts/GoogleSans-400.ttf
+          weight: 400
+        - asset: assets/fonts/GoogleSans-500.ttf
+          weight: 500
+        - asset: assets/fonts/GoogleSans-600.ttf
+          weight: 600
+        - asset: assets/fonts/GoogleSans-700.ttf
+          weight: 700
+    - family: GoogleSansFlex
+      fonts:
+        - asset: assets/fonts/GoogleSansFlex-400.ttf
+          weight: 400
+        - asset: assets/fonts/GoogleSansFlex-500.ttf
+          weight: 500
+        - asset: assets/fonts/GoogleSansFlex-600.ttf
+          weight: 600
+        - asset: assets/fonts/GoogleSansFlex-700.ttf
+          weight: 700
+    - family: GoogleSansCode
+      fonts:
+        - asset: assets/fonts/GoogleSansCode-400.ttf
+          weight: 400
+        - asset: assets/fonts/GoogleSansCode-500.ttf
+          weight: 500
+        - asset: assets/fonts/GoogleSansCode-600.ttf
+          weight: 600
+        - asset: assets/fonts/GoogleSansCode-700.ttf
+          weight: 700
