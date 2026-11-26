@@ -124,9 +124,10 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
   res.status(status).json({ error: clientMessage })
 })
 
-// Start Server
-app.listen(PORT, async () => {
-  logServerEvent('SERVER', `Lapis Suites backend API listening on http://localhost:${PORT}`)
+// Start Server (bind 0.0.0.0 so Cloud Run / Firebase App Hosting routes traffic properly)
+const listenPort = Number(PORT) || 3001
+app.listen(listenPort, '0.0.0.0', async () => {
+  logServerEvent('SERVER', `Lapis Suites backend API listening on http://0.0.0.0:${listenPort}`)
   try {
     await connectMongo()
     startReminderScheduler()
