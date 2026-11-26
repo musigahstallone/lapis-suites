@@ -4,10 +4,37 @@ runConfig:
   concurrency: 80
   minInstances: 0
   maxInstances: 4
+
 scripts:
   buildCommand: npm run build
   runCommand: npm start
+
 env:
+  # Non-sensitive runtime configuration
+  - variable: NODE_ENV
+    value: production
+  - variable: APP_BASE_URL
+    value: https://suites.qmusglobal.com
+  - variable: CORS_ORIGINS
+    value: https://suites.qmusglobal.com,https://lapis-suites--lapis-suites-gataka.us-east4.hosted.app
+  - variable: KCB_BASE_URL
+    value: https://uat.buni.kcbgroup.com
+  - variable: ALLOW_KCB_UAT_IN_PROD
+    value: "true"
+  - variable: KCB_DEFAULT_ROUTE_CODE
+    value: "207"
+  - variable: KCB_CALLBACK_URL
+    value: https://suites.qmusglobal.com/api/kcb/callback
+  - variable: KCB_CALLBACK_STRICT
+    value: "false"
+  - variable: MOBILESASA_BASE_URL
+    value: https://api.mobilesasa.com
+  - variable: MOBILESASA_SENDER_ID
+    value: MOBILESASA
+  - variable: MOBILESASA_CALLBACK_URL
+    value: https://suites.qmusglobal.com/api/sms/dlr
+
+  # Secrets (values live strictly in Cloud Secret Manager)
   - variable: MONGODB_URI
     secret: MONGODB_URI
   - variable: JWT_SECRET
