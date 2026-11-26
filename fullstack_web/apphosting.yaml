@@ -1,14 +1,24 @@
-# Firebase App Hosting configuration for Lapis Suites (fullstack_web)
-# Environment variables and secrets are configured in the Firebase Console
-# (or Cloud Secret Manager) so no credentials are stored in git.
-
 runConfig:
   cpu: 1
   memoryMiB: 512
   concurrency: 80
   minInstances: 0
   maxInstances: 4
-
 scripts:
   buildCommand: npm run build
   runCommand: npm start
+env:
+  - variable: MONGODB_URI
+    secret: MONGODB_URI
+  - variable: JWT_SECRET
+    secret: JWT_SECRET
+  - variable: KCB_CONSUMER_KEY
+    secret: KCB_CONSUMER_KEY
+  - variable: KCB_CONSUMER_SECRET
+    secret: KCB_CONSUMER_SECRET
+  - variable: KCB_WEBHOOK_SECRET
+    secret: KCB_WEBHOOK_SECRET
+  - variable: MOBILESASA_TOKEN
+    secret: MOBILESASA_TOKEN
+  - variable: MOBILESASA_WEBHOOK_SECRET
+    secret: MOBILESASA_WEBHOOK_SECRET
