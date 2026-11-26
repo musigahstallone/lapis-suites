@@ -68,17 +68,17 @@ onUnmounted(() => {
 
 const currentTenant = computed(() => {
   return (
-    store.tenants.find(t => t.id === store.session.tenantId || t.id === store.session.id) ||
     store.tenants.find(t => store.session.email && t.email && t.email.toLowerCase() === store.session.email.toLowerCase()) ||
-    store.tenants[0]
+    store.tenants.find(t => store.session.tenantId && t.id === store.session.tenantId) ||
+    store.tenants.find(t => store.session.id && t.id === store.session.id) ||
+    null
   )
 })
 
 const activeLease = computed(() => {
   if (!currentTenant.value) return null
   return (
-    store.leases.find(l => (l.tenantId === currentTenant.value?.id || l.tenantName?.toLowerCase() === currentTenant.value?.name?.toLowerCase()) && (l.status === 'active' || l.status === 'pending_deposit')) ||
-    store.leases.find(l => (currentTenant.value?.currentUnitNumber && l.unitNumber === currentTenant.value?.currentUnitNumber)) ||
+    store.leases.find(l => l.tenantId === currentTenant.value?.id && (l.status === 'active' || l.status === 'pending_deposit')) ||
     store.leases.find(l => l.tenantId === currentTenant.value?.id) ||
     null
   )
@@ -86,15 +86,15 @@ const activeLease = computed(() => {
 
 const currentUnit = computed(() => {
   if (!currentTenant.value) return null
-  if (currentTenant.value.currentUnitId) {
-    const u = store.units.find(u => u.id === currentTenant.value?.currentUnitId)
-    if (u) return u
-  }
   if (activeLease.value?.unitId) {
     const u = store.units.find(u => u.id === activeLease.value?.unitId)
     if (u) return u
   }
-  const unitNum = currentTenant.value.currentUnitNumber || activeLease.value?.unitNumber || store.session.unitNumber
+  if (currentTenant.value.currentUnitId) {
+    const u = store.units.find(u => u.id === currentTenant.value?.currentUnitId)
+    if (u) return u
+  }
+  const unitNum = activeLease.value?.unitNumber || currentTenant.value.currentUnitNumber
   if (unitNum) {
     const u = store.units.find(u => u.unitNumber === unitNum)
     if (u) return u
@@ -116,7 +116,7 @@ const amount = ref<number>(
     ? standing.value.balance
     : (activeLease.value?.monthlyRent || currentUnit.value?.monthlyRent || 0)
 )
-const phoneNumber = ref(currentTenant.value?.phone || '0712904883')
+const phoneNumber = ref(currentTenant.value?.phone || '')
 const reference = ref('')
 const notes = ref(isDepositUnpaid.value ? 'Security Deposit & Rent' : 'Monthly Rent Payment')
 
@@ -345,6 +345,27 @@ function switchPaymentMode(mode: 'kcb_stk' | 'direct_portal') {
           <span>Paybill Manual</span>
         </button>
       </div>-->
+
+      <!-- Official Paybill & Anti-Fraud Notice -->
+      <div
+        style="padding: 14px 16px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; margin-bottom: 18px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 10px;">
+          <div>
+            <span style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; font-weight: 600;">Pay Bill Number</span>
+            <div class="mono" style="font-size: 1.05rem; font-weight: 700; color: #111b35; margin-top: 2px;">{{ propertySettings.paybillNumber || '522533' }}</div>
+          </div>
+          <div>
+            <span style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; font-weight: 600;">Account No</span>
+            <div class="mono" style="font-size: 1.05rem; font-weight: 700; color: #111b35; margin-top: 2px;">8107578</div>
+          </div>
+        </div>
+        <p style="font-size: 0.8rem; color: #334155; margin: 0 0 8px;">
+          You will receive a message that you sent to <strong>LAPIS APARTMENTS LIMITED</strong>.
+        </p>
+        <div style="padding: 8px 10px; background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; font-size: 0.76rem; color: #b45309; font-weight: 600; line-height: 1.4;">
+          NB: To avoid fraud and losing money, DO NOT pay rent to any other account or to any personal numbers.
+        </div>
+      </div>
 
       <!-- Mode 1: M-Pesa STK Push Form -->
       <form class="panel"

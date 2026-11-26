@@ -204,10 +204,16 @@ function handlePrint() {
           </tfoot>
         </table>
 
-        <!-- Minimal 1-Line Paybill Footer -->
-        <footer class="stmt-footer">
-          <span>Paybill <strong class="mono">{{ propertyInfo.paybillNumber }}</strong> · Account <strong class="mono">LAPIS-{{ tenant?.currentUnitNumber || 'UNIT' }}</strong></span>
-          <span>{{ propertyInfo.name }}</span>
+        <!-- Official Paybill Footer & Anti-Fraud Notice -->
+        <footer class="stmt-footer" style="flex-direction: column; align-items: flex-start; gap: 4px;">
+          <div>
+            Paybill <strong class="mono">{{ propertyInfo.paybillNumber || '522533' }}</strong>
+            · Account <strong class="mono">8107578</strong>
+            · <strong>LAPIS APARTMENTS LIMITED</strong>
+          </div>
+          <small style="color: #b45309; font-size: 0.72rem;">
+            NB: To avoid fraud and losing money, DO NOT pay rent to any other account or to any personal numbers.
+          </small>
         </footer>
       </div>
     </div>

@@ -23,18 +23,17 @@ const showStatementSheet = ref(false)
 
 const resident = computed(() => {
   return (
-    store.tenants.find(t => t.id === store.session.tenantId || t.id === store.session.id) ||
-    store.tenants.find(t => t.email && store.session.email && t.email.toLowerCase() === store.session.email.toLowerCase()) ||
-    store.tenants.find(t => store.session.name && t.name && t.name.toLowerCase().includes(store.session.name.toLowerCase())) ||
-    store.tenants[0]
+    store.tenants.find(t => store.session.email && t.email && t.email.toLowerCase() === store.session.email.toLowerCase()) ||
+    store.tenants.find(t => store.session.tenantId && t.id === store.session.tenantId) ||
+    store.tenants.find(t => store.session.id && t.id === store.session.id) ||
+    null
   )
 })
 
 const activeLease = computed(() => {
   if (!resident.value) return null
   return (
-    store.leases.find(l => (l.tenantId === resident.value?.id || l.tenantName?.toLowerCase() === resident.value?.name?.toLowerCase()) && (l.status === 'active' || l.status === 'pending_deposit')) ||
-    store.leases.find(l => (resident.value?.currentUnitNumber && l.unitNumber === resident.value?.currentUnitNumber)) ||
+    store.leases.find(l => l.tenantId === resident.value?.id && (l.status === 'active' || l.status === 'pending_deposit')) ||
     store.leases.find(l => l.tenantId === resident.value?.id) ||
     null
   )
@@ -42,15 +41,15 @@ const activeLease = computed(() => {
 
 const currentUnit = computed(() => {
   if (!resident.value) return null
-  if (resident.value.currentUnitId) {
-    const u = store.units.find(u => u.id === resident.value?.currentUnitId)
-    if (u) return u
-  }
   if (activeLease.value?.unitId) {
     const u = store.units.find(u => u.id === activeLease.value?.unitId)
     if (u) return u
   }
-  const unitNum = resident.value.currentUnitNumber || activeLease.value?.unitNumber || store.session.unitNumber
+  if (resident.value.currentUnitId) {
+    const u = store.units.find(u => u.id === resident.value?.currentUnitId)
+    if (u) return u
+  }
+  const unitNum = activeLease.value?.unitNumber || resident.value.currentUnitNumber
   if (unitNum) {
     const u = store.units.find(u => u.unitNumber === unitNum)
     if (u) return u
@@ -64,11 +63,7 @@ const standing = computed(() => {
 
 const transactions = computed(() => {
   if (!resident.value) return []
-  return store.transactions.filter(tx =>
-    tx.tenantId === resident.value?.id ||
-    (activeLease.value && tx.leaseId === activeLease.value.id) ||
-    (currentUnit.value && tx.unitNumber === currentUnit.value.unitNumber)
-  )
+  return store.transactions.filter(tx => tx.tenantId === resident.value?.id)
 })
 
 // Pagination

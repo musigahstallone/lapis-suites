@@ -17,7 +17,6 @@ router.get('/units', authenticateToken, async (req: AuthRequest, res: Response) 
       const orClauses: any[] = []
       if (user.tenantId) orClauses.push({ currentTenantId: user.tenantId })
       if (user.userId) orClauses.push({ currentTenantId: user.userId })
-      if (user.unitNumber) orClauses.push({ unitNumber: user.unitNumber })
       if (orClauses.length === 0) return res.json([])
       query = { $or: orClauses }
     }

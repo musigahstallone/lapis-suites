@@ -53,8 +53,10 @@ class ApiService {
     realtimeUpdateNotifier.value++;
   }
 
-  /// Persist JWT & user profile across app restarts
+  /// Persist JWT & user profile across app restarts (clears prior user's cached state first)
   static Future<void> _saveSession(String token, Map<String, dynamic> user) async {
+    AppNotifications.resetForAccountSwitch();
+    cachedSettings = const PropertySettingsModel();
     authToken = token;
     currentUser = user;
     try {
@@ -573,7 +575,8 @@ class ApiService {
   static Future<void> logout() async {
     authToken = null;
     currentUser = null;
-    AppNotifications.stopPolling();
+    cachedSettings = const PropertySettingsModel();
+    AppNotifications.resetForAccountSwitch();
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_tokenKey);
@@ -750,7 +753,80 @@ class ApiService {
     }
   }
 
-  // --- TENANT-SPECIFIC LOADERS ---
+  // --- TENANT-SPECIFIC LOADERS (Strictly JWT-scoped on backend) ---
+
+  static Future<TenantModel?> fetchMyTenantProfile() async {
+    try {
+      final res = await http
+          .get(Uri.parse('$baseUrl/api/tenants'), headers: _headers)
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode == 200) {
+        final decoded = _safeDecode(res);
+        if (decoded is List && decoded.isNotEmpty) {
+          final email = (currentUser?['email'] ?? '').toString().toLowerCase();
+          final tid = (currentUser?['tenantId'] ?? '').toString();
+          final list = decoded.whereType<Map<String, dynamic>>().toList();
+          for (final item in list) {
+            if (email.isNotEmpty && (item['email'] ?? '').toString().toLowerCase() == email) {
+              return TenantModel.fromJson(item);
+            }
+          }
+          for (final item in list) {
+            if (tid.isNotEmpty && (item['id'] ?? '').toString() == tid) {
+              return TenantModel.fromJson(item);
+            }
+          }
+          if (list.length == 1) return TenantModel.fromJson(list.first);
+        }
+      }
+    } catch (_) {}
+    final tid = (currentUser?['tenantId'] ?? currentUser?['userId'] ?? '').toString();
+    return fetchTenantProfile(tid);
+  }
+
+  static Future<List<LeaseModel>> fetchMyLeases() async {
+    try {
+      final res = await http
+          .get(Uri.parse('$baseUrl/api/leases'), headers: _headers)
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode == 200) {
+        final list = _safeDecode(res);
+        if (list is List) {
+          return list
+              .whereType<Map<String, dynamic>>()
+              .map((l) => LeaseModel.fromJson(l))
+              .toList();
+        }
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  static Future<List<TransactionModel>> fetchMyTransactions({
+    int page = 1,
+    int limit = 20,
+  }) async {
+    try {
+      final res = await http
+          .get(
+            Uri.parse('$baseUrl/api/transactions?page=$page&limit=$limit'),
+            headers: _headers,
+          )
+          .timeout(const Duration(seconds: 10));
+      final decoded = _safeDecode(res);
+      if (res.statusCode == 200 && decoded is List) {
+        final txs = decoded
+            .whereType<Map<String, dynamic>>()
+            .map((t) => TransactionModel.fromJson(t))
+            .toList();
+        txs.sort((a, b) => b.date.compareTo(a.date));
+        return txs;
+      }
+      throw ApiException(_extractError(res, decoded, 'Failed to load payment records.'));
+    } catch (e) {
+      throw ApiException(friendlyError(e));
+    }
+  }
 
   static Future<TenantModel?> fetchTenantProfile(String tenantId) async {
     if (tenantId.isEmpty) return null;

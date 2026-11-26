@@ -631,49 +631,62 @@ class OrbixOverviewCard extends StatelessWidget {
           const SizedBox(height: 14),
           Container(height: 1, color: Colors.white.withValues(alpha: 0.1)),
           const SizedBox(height: 12),
-          Row(
-            children: metrics.map((m) {
-              return Expanded(
-                flex: m.flex,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          // Responsive 2x2 metrics grid so exact unrounded KES figures never squeeze or clip on narrow phones
+          Column(
+            children: [
+              for (int rowStart = 0; rowStart < metrics.length; rowStart += 2) ...[
+                if (rowStart > 0) const SizedBox(height: 10),
+                Row(
                   children: [
-                    Text(
-                      m.label,
-                      style: sans(10, color: const Color(0xFF94A3B8), weight: FontWeight.w500),
-                    ),
-                    const SizedBox(height: 2),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.baseline,
-                      textBaseline: TextBaseline.alphabetic,
-                      children: [
-                        if (m.prefix != null) ...[
-                          Text(
-                            m.prefix!,
-                            style: sans(
-                              9,
-                              color: Colors.white.withValues(alpha: 0.6),
-                              weight: FontWeight.w500,
-                              fontFeatures: kTabularNums,
+                    for (int idx = rowStart; idx < rowStart + 2 && idx < metrics.length; idx++)
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              metrics[idx].label,
+                              style: sans(10, color: const Color(0xFF94A3B8), weight: FontWeight.w500),
                             ),
-                          ),
-                          const SizedBox(width: 3),
-                        ],
-                        Flexible(
-                          child: Text(
-                            m.value,
-                            style: flex(12, color: Colors.white, weight: FontWeight.w700, fontFeatures: kTabularNums),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                            const SizedBox(height: 2),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.baseline,
+                              textBaseline: TextBaseline.alphabetic,
+                              children: [
+                                if (metrics[idx].prefix != null) ...[
+                                  Text(
+                                    metrics[idx].prefix!,
+                                    style: sans(
+                                      9.5,
+                                      color: Colors.white.withValues(alpha: 0.62),
+                                      weight: FontWeight.w500,
+                                      fontFeatures: kTabularNums,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                ],
+                                Flexible(
+                                  child: Text(
+                                    metrics[idx].value,
+                                    style: flex(
+                                      13,
+                                      color: Colors.white,
+                                      weight: FontWeight.w700,
+                                      fontFeatures: kTabularNums,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
+                      ),
                   ],
                 ),
-              );
-            }).toList(),
+              ],
+            ],
           ),
           if (collectionProgress != null && expectedAmount != null) ...[
             const SizedBox(height: 14),

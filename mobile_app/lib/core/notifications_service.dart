@@ -90,6 +90,12 @@ class AppNotifications {
     _primed = false;
   }
 
+  /// Clear cached seen notification IDs when switching accounts / logging out
+  static void resetForAccountSwitch() {
+    stopPolling();
+    _seenIds.clear();
+  }
+
   static Future<void> _checkServerNotifications() async {
     if (ApiService.authToken == null) return;
     try {

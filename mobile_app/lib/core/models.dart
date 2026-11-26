@@ -503,6 +503,8 @@ class UnitTypeModel {
 class PropertySettingsModel {
   final String propertyName;
   final String paybillNumber;
+  final String accountNumber;
+  final String paybillRecipientName;
   final int rentDueDay;
   final int gracePeriodDays;
   final int lateFeePercent;
@@ -511,7 +513,9 @@ class PropertySettingsModel {
 
   const PropertySettingsModel({
     this.propertyName = 'LAPIS SUITES',
-    this.paybillNumber = '542910',
+    this.paybillNumber = '522533',
+    this.accountNumber = '8107578',
+    this.paybillRecipientName = 'LAPIS APARTMENTS LIMITED',
     this.rentDueDay = 5,
     this.gracePeriodDays = 5,
     this.lateFeePercent = 5,
@@ -522,7 +526,9 @@ class PropertySettingsModel {
   factory PropertySettingsModel.fromJson(Map<String, dynamic> json) {
     return PropertySettingsModel(
       propertyName: json['propertyName']?.toString() ?? 'LAPIS SUITES',
-      paybillNumber: json['paybillNumber']?.toString() ?? '542910',
+      paybillNumber: json['paybillNumber']?.toString() ?? '522533',
+      accountNumber: json['accountNumber']?.toString() ?? '8107578',
+      paybillRecipientName: json['paybillRecipientName']?.toString() ?? 'LAPIS APARTMENTS LIMITED',
       rentDueDay: (json['rentDueDay'] as num?)?.toInt() ?? 5,
       gracePeriodDays: (json['gracePeriodDays'] as num?)?.toInt() ?? 5,
       lateFeePercent: (json['lateFeePercent'] as num?)?.toInt() ?? 5,

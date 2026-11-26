@@ -5,9 +5,10 @@ import { store, updateTenant } from '../../data'
 
 const resident = computed(() => {
   return (
-    store.tenants.find(t => t.id === store.session.tenantId || t.id === store.session.id) ||
     store.tenants.find(t => store.session.email && t.email && t.email.toLowerCase() === store.session.email.toLowerCase()) ||
-    store.tenants[0]
+    store.tenants.find(t => store.session.tenantId && t.id === store.session.tenantId) ||
+    store.tenants.find(t => store.session.id && t.id === store.session.id) ||
+    null
   )
 })
 

@@ -102,13 +102,10 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
     }
 
     try {
-      final tenantId =
-          (ApiService.currentUser?['tenantId'] ?? ApiService.currentUser?['userId'] ?? '').toString();
-
       final results = await Future.wait([
-        ApiService.fetchTenantProfile(tenantId),
-        ApiService.fetchTenantLeases(tenantId),
-        ApiService.fetchTenantTransactions(tenantId, page: 1, limit: 20),
+        ApiService.fetchMyTenantProfile(),
+        ApiService.fetchMyLeases(),
+        ApiService.fetchMyTransactions(page: 1, limit: 20),
         ApiService.fetchMaintenance(),
         ApiService.fetchSettings(),
         ApiService.fetchNotifications(),
@@ -147,11 +144,10 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
   }
 
   Future<void> _loadMorePayments() async {
-    if (_tenant == null) return;
     setState(() => _isLoadingMorePay = true);
     try {
       final nextPage = _payPage + 1;
-      final more = await ApiService.fetchTenantTransactions(_tenant!.id, page: nextPage, limit: 20);
+      final more = await ApiService.fetchMyTransactions(page: nextPage, limit: 20);
       if (mounted) {
         setState(() {
           if (more.isEmpty) {

@@ -33,6 +33,8 @@ export interface PropertyInfo {
   contactPhone: string
   contactEmail: string
   paybillNumber: string
+  accountNumber?: string
+  paybillRecipientName?: string
 }
 
 export const propertyInfo: PropertyInfo = {
@@ -43,7 +45,9 @@ export const propertyInfo: PropertyInfo = {
   managerName: 'Alex Morgan',
   contactPhone: '+254 700 892 110',
   contactEmail: 'management@lapissuites.com',
-  paybillNumber: '522522'
+  paybillNumber: '522533',
+  accountNumber: '8107578',
+  paybillRecipientName: 'LAPIS APARTMENTS LIMITED'
 }
 
 export const propertySettings = reactive<PropertySettings>({
@@ -53,7 +57,7 @@ export const propertySettings = reactive<PropertySettings>({
   gracePeriodDays: 5,
   lateFeePercent: 5,
   autoReconciliationEnabled: true,
-  paybillNumber: '522522'
+  paybillNumber: '522533'
 })
 
 export function formatKES(amount: number): string {

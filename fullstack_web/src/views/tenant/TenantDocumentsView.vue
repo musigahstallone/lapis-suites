@@ -9,19 +9,16 @@ onMounted(async () => {
 
 const resident = computed(() => {
   return (
-    store.tenants.find(t => t.id === store.session.tenantId || t.id === store.session.id) ||
-    store.tenants.find(t => t.email.toLowerCase() === store.session.email.toLowerCase()) ||
-    store.tenants[0]
+    store.tenants.find(t => store.session.email && t.email && t.email.toLowerCase() === store.session.email.toLowerCase()) ||
+    store.tenants.find(t => store.session.tenantId && t.id === store.session.tenantId) ||
+    store.tenants.find(t => store.session.id && t.id === store.session.id) ||
+    null
   )
 })
 
 const leases = computed(() => {
   if (!resident.value) return []
-  return store.leases.filter(l =>
-    l.tenantId === resident.value?.id ||
-    l.tenantName?.toLowerCase() === resident.value?.name?.toLowerCase() ||
-    (resident.value?.currentUnitNumber && l.unitNumber === resident.value?.currentUnitNumber)
-  )
+  return store.leases.filter(l => l.tenantId === resident.value?.id)
 })
 </script>
 

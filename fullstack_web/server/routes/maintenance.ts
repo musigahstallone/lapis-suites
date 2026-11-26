@@ -13,7 +13,12 @@ router.get('/maintenance', authenticateToken, async (req: AuthRequest, res: Resp
   try {
     const db = getDb()
     const user = req.user
-    const query = (user && user.role === 'tenant' && user.tenantId) ? { tenantId: user.tenantId } : {}
+    let query: any = {}
+    if (user && user.role === 'tenant') {
+      const ids = [user.tenantId, user.userId].filter(Boolean)
+      if (ids.length === 0) return res.json([])
+      query = { tenantId: { $in: ids } }
+    }
     const items = await db.collection('maintenance').find(query, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray()
 
     logServerEvent('MAINTENANCE', `Served ${items.length} tickets to ${user?.email || 'Anonymous'} (${user?.role || 'none'})`)

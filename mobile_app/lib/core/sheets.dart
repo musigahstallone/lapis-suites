@@ -333,8 +333,13 @@ void showStkPushSheet(
       builder: (ctx, setSheetState) {
         final paybill = ApiService.cachedSettings.paybillNumber.isNotEmpty
             ? ApiService.cachedSettings.paybillNumber
-            : '542910';
-        final acct = 'LAPIS-${unitNumber.isNotEmpty ? unitNumber : "UNIT"}';
+            : '522533';
+        final acct = ApiService.cachedSettings.accountNumber.isNotEmpty
+            ? ApiService.cachedSettings.accountNumber
+            : '8107578';
+        final recipientName = ApiService.cachedSettings.paybillRecipientName.isNotEmpty
+            ? ApiService.cachedSettings.paybillRecipientName
+            : 'LAPIS APARTMENTS LIMITED';
 
         Future<void> handleCheckStatus() async {
           if (checkoutId.isEmpty && merchantId.isEmpty) return;
@@ -543,35 +548,71 @@ void showStkPushSheet(
                         label: Text('Send M-Pesa Prompt', style: sans(12.5, color: C.ctaOn, weight: FontWeight.w600)),
                       ),
                     ),
-                  ] else ...[
-                    // Paybill Instructions Card
+                    const SizedBox(height: 10),
                     Container(
-                      padding: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: C.amberBg,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: C.amberBorder),
+                      ),
+                      child: Text(
+                        'Paybill $paybill · Account $acct ($recipientName). NB: To avoid fraud and losing money, DO NOT pay rent to any other account or to any personal numbers.',
+                        style: sans(10.5, color: C.amberText, weight: FontWeight.w600, height: 1.35),
+                      ),
+                    ),
+                  ] else ...[
+                    // Official Paybill Instructions & Anti-Fraud Card
+                    Container(
+                      padding: const EdgeInsets.all(13),
                       decoration: BoxDecoration(
                         color: C.blueBg,
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(color: C.blueBorder),
                       ),
-                      child: Row(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('PAYBILL NO.', style: sans(9.5, color: C.blueText, weight: FontWeight.w700, letterSpacing: 0.5)),
-                                const SizedBox(height: 2),
-                                Text(paybill, style: mono(14.5, color: C.navy, weight: FontWeight.w700)),
-                              ],
-                            ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('PAY BILL NUMBER', style: sans(9.5, color: C.blueText, weight: FontWeight.w700, letterSpacing: 0.5)),
+                                    const SizedBox(height: 2),
+                                    Text(paybill, style: mono(15, color: C.navy, weight: FontWeight.w700)),
+                                  ],
+                                ),
+                              ),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('ACCOUNT NO.', style: sans(9.5, color: C.blueText, weight: FontWeight.w700, letterSpacing: 0.5)),
+                                    const SizedBox(height: 2),
+                                    Text(acct, style: mono(15, color: C.navy, weight: FontWeight.w700)),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('ACCOUNT NO.', style: sans(9.5, color: C.blueText, weight: FontWeight.w700, letterSpacing: 0.5)),
-                                const SizedBox(height: 2),
-                                Text(acct, style: mono(14, color: C.navy, weight: FontWeight.w700)),
-                              ],
+                          const SizedBox(height: 8),
+                          Text(
+                            'You will receive a message confirming payment to $recipientName.',
+                            style: sans(11, color: C.textPrimary, weight: FontWeight.w500, height: 1.35),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+                            decoration: BoxDecoration(
+                              color: C.amberBg,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: C.amberBorder),
+                            ),
+                            child: Text(
+                              'NB: To avoid fraud and losing money, DO NOT pay rent to any other account or to any personal numbers.',
+                              style: sans(10.5, color: C.amberText, weight: FontWeight.w600, height: 1.35),
                             ),
                           ),
                         ],

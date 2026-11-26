@@ -15,7 +15,18 @@ router.get('/notifications', authenticateToken, async (req: AuthRequest, res: Re
     const user = req.user!
     let query: any = {}
     if (user.role === 'tenant') {
-      query = { $or: [{ tenantId: user.tenantId }, { role: 'all' }, { role: 'tenant' }] }
+      const tenantOrClauses: any[] = [
+        { role: 'all', tenantId: { $exists: false } },
+        { role: 'all', tenantId: null },
+        { role: 'tenant', tenantId: { $exists: false } },
+        { role: 'tenant', tenantId: null }
+      ]
+      if (user.tenantId) tenantOrClauses.push({ tenantId: user.tenantId })
+      if (user.userId) {
+        tenantOrClauses.push({ tenantId: user.userId })
+        tenantOrClauses.push({ userId: user.userId })
+      }
+      query = { $or: tenantOrClauses }
     } else {
       query = { $or: [{ role: 'landlord' }, { role: 'all' }] }
     }

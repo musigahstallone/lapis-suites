@@ -15,6 +15,8 @@ export interface AppSettingsDoc {
   contactPhone: string;
   contactEmail: string;
   paybillNumber: string;
+  accountNumber: string;
+  paybillRecipientName: string;
   currency: string;
   rentDueDay: number;
   gracePeriodDays: number;
@@ -32,7 +34,9 @@ export const DEFAULT_APP_SETTINGS: AppSettingsDoc = {
   managerName: "Lapis Suites Management",
   contactPhone: "+254 700 892 110",
   contactEmail: "lapissuites@gmail.com",
-  paybillNumber: "522522",
+  paybillNumber: "522533",
+  accountNumber: "8107578",
+  paybillRecipientName: "LAPIS APARTMENTS LIMITED",
   currency: "KES",
   rentDueDay: 5,
   gracePeriodDays: 5,

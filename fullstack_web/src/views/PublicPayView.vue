@@ -616,6 +616,20 @@ async function handlePaymentConfirmed(receiptNumber: string, amountPaid: number)
             </div>
           </div>
 
+          <!-- Official Paybill & Anti-Fraud Notice -->
+          <div style="padding: 12px 14px; border-radius: 10px; border: 1px solid #e2e8f0; background: #ffffff; margin-bottom: 16px; font-size: 0.78rem;">
+            <div style="display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px;">
+              <span>Paybill: <strong class="mono" style="color: #111b35;">522533</strong></span>
+              <span>Account No: <strong class="mono" style="color: #111b35;">8107578</strong></span>
+            </div>
+            <p style="margin: 0 0 6px; color: #334155;">
+              You will receive a message confirming payment to <strong>LAPIS APARTMENTS LIMITED</strong>.
+            </p>
+            <p style="margin: 0; color: #b45309; font-weight: 600; line-height: 1.35;">
+              NB: To avoid fraud and losing money, DO NOT pay rent to any other account or to any personal numbers.
+            </p>
+          </div>
+
           <div v-if="error" class="auth-alert error">
             <AlertCircle :size="16" class="auth-alert-icon" />
             <span>{{ error }}</span>
