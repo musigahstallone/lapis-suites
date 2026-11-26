@@ -84,6 +84,17 @@ router.post('/leases', authenticateToken, requireRole(['landlord']), async (req:
     if (!unit) return res.status(404).json({ error: 'Unit not found' })
     if (!tenant) return res.status(404).json({ error: 'Tenant not found' })
 
+    // Strict rule: ONE unit can only have ONE active lease at a time (while ONE tenant may hold MANY units)
+    const existingActiveLeaseOnUnit = await db.collection('leases').findOne({
+      unitId,
+      status: { $in: ['active', 'pending_deposit'] }
+    })
+    if (existingActiveLeaseOnUnit || String(unit.status || '').toLowerCase() === 'occupied') {
+      return res.status(409).json({
+        error: `Unit ${unit.unitNumber} already has an active lease (${existingActiveLeaseOnUnit?.leaseNumber || 'occupied'}). Terminate or transfer it first.`
+      })
+    }
+
     const leaseId = generateHexObjectId()
     const leaseNumber = `LPS-L${Math.floor(1000 + Math.random() * 9000)}`
     const rentNum = Number(monthlyRent || 0)
@@ -111,59 +122,54 @@ router.post('/leases', authenticateToken, requireRole(['landlord']), async (req:
     }
 
     await db.collection('leases').insertOne(newLease)
-    // Update unit to occupied
+    // Mark unit occupied
     await db.collection('units').updateOne(
       { id: unitId },
-      { $set: { status: 'occupied', currentTenantId: tenantId, currentLeaseId: leaseId, updatedAt: new Date().toISOString() } }
+      { $set: { status: 'occupied', currentTenantId: tenantId, currentTenantName: tenant.name, currentLeaseId: leaseId, updatedAt: new Date().toISOString() } }
     )
-    // Update tenant assigned unit
+
+    // Support multiple active units per tenant: preserve primary default unit if already assigned, and track all unitNumbers
+    const allTenantLeases = await db.collection('leases')
+      .find({ tenantId, status: { $in: ['active', 'pending_deposit'] } })
+      .sort({ startDate: 1, createdAt: 1 })
+      .toArray()
+    const primaryLease = allTenantLeases[0] || newLease
+    const unitNumbers = allTenantLeases.map((l: any) => l.unitNumber).filter(Boolean)
+
     await db.collection('tenants').updateOne(
       { id: tenantId },
       {
         $set: {
-          currentUnitId: unitId,
-          currentUnitNumber: unit.unitNumber,
-          currentLeaseId: leaseId,
-          moveInDate: startDate,
+          currentUnitId: primaryLease.unitId,
+          currentUnitNumber: primaryLease.unitNumber,
+          currentLeaseId: primaryLease.id,
+          unitNumbers,
+          moveInDate: tenant.moveInDate || startDate,
           updatedAt: new Date().toISOString()
         }
       }
     )
 
-    // Synchronize tenant's user login record
-    await db.collection('users').updateMany(
+    // Synchronize ONLY this tenant's own user login record (never touch other users sharing a phone)
+    await db.collection('users').updateOne(
       {
+        role: 'tenant',
         $or: [
-          { id: tenantId },
           { tenantId: tenantId },
-          { email: tenant.email.toLowerCase() }
+          { id: tenantId },
+          ...(tenant.email ? [{ email: tenant.email.toLowerCase() }] : [])
         ]
       },
       {
         $set: {
           tenantId: tenantId,
-          unitNumber: unit.unitNumber,
+          unitNumber: primaryLease.unitNumber,
           updatedAt: new Date().toISOString()
         }
       }
     )
 
-    // Synchronize any duplicate tenant record sharing the same phone
-    if (tenant.phone) {
-      await db.collection('tenants').updateMany(
-        { phone: tenant.phone },
-        {
-          $set: {
-            currentUnitId: unitId,
-            currentUnitNumber: unit.unitNumber,
-            currentLeaseId: leaseId,
-            updatedAt: new Date().toISOString()
-          }
-        }
-      )
-    }
-
-    logServerEvent('LEASES', `Created lease ${leaseNumber} in MongoDB: Unit ${unit.unitNumber} -> ${tenant.name}`)
+    logServerEvent('LEASES', `Created lease ${leaseNumber} in MongoDB: Unit ${unit.unitNumber} -> ${tenant.name} (total active leases: ${allTenantLeases.length})`)
 
     // Notify tenant via SMS about their new lease assignment
     if (tenant.phone) {
@@ -193,10 +199,36 @@ router.post('/leases/:id/terminate', authenticateToken, requireRole(['landlord']
     const nowIso = new Date().toISOString()
     await db.collection('leases').updateOne({ id }, { $set: { status: 'terminated', terminatedAt: nowIso } })
     if (lease.unitId) {
-      await db.collection('units').updateOne({ id: lease.unitId }, { $set: { status: 'vacant', currentTenantId: null, currentLeaseId: null, updatedAt: nowIso } })
+      await db.collection('units').updateOne(
+        { id: lease.unitId },
+        { $set: { status: 'vacant', currentTenantId: null, currentTenantName: null, currentLeaseId: null, updatedAt: nowIso } }
+      )
     }
     if (lease.tenantId) {
-      await db.collection('tenants').updateOne({ id: lease.tenantId }, { $set: { currentUnitId: null, currentUnitNumber: '', currentLeaseId: null, updatedAt: nowIso } })
+      // Check if tenant still has other active leases before clearing their primary unit
+      const remainingLeases = await db.collection('leases')
+        .find({ tenantId: lease.tenantId, id: { $ne: id }, status: { $in: ['active', 'pending_deposit'] } })
+        .sort({ startDate: 1, createdAt: 1 })
+        .toArray()
+      const nextPrimary = remainingLeases[0] || null
+      const remainingUnits = remainingLeases.map((l: any) => l.unitNumber).filter(Boolean)
+
+      await db.collection('tenants').updateOne(
+        { id: lease.tenantId },
+        {
+          $set: {
+            currentUnitId: nextPrimary ? nextPrimary.unitId : null,
+            currentUnitNumber: nextPrimary ? nextPrimary.unitNumber : '',
+            currentLeaseId: nextPrimary ? nextPrimary.id : null,
+            unitNumbers: remainingUnits,
+            updatedAt: nowIso
+          }
+        }
+      )
+      await db.collection('users').updateOne(
+        { role: 'tenant', $or: [{ tenantId: lease.tenantId }, { id: lease.tenantId }] },
+        { $set: { unitNumber: nextPrimary ? nextPrimary.unitNumber : '', updatedAt: nowIso } }
+      )
     }
     logServerEvent('LEASES', `Terminated lease ${lease.leaseNumber} in MongoDB. Unit ${lease.unitNumber} marked vacant.`)
     res.json({ success: true, message: 'Lease terminated' })
@@ -216,12 +248,24 @@ router.post('/leases/transfer', authenticateToken, requireRole(['landlord']), as
     const newUnit = await db.collection('units').findOne({ id: String(newUnitId) })
     if (!tenant || !newUnit) return res.status(404).json({ error: 'Tenant or target unit not found' })
 
+    // Strict rule: destination unit cannot already have an active lease
+    const targetOccupied = await db.collection('leases').findOne({
+      unitId: newUnit.id,
+      status: { $in: ['active', 'pending_deposit'] }
+    })
+    if (targetOccupied || String(newUnit.status || '').toLowerCase() === 'occupied') {
+      return res.status(409).json({ error: `Unit ${newUnit.unitNumber} already has an active lease.` })
+    }
+
     const nowIso = new Date().toISOString()
     // 1. Vacate old unit
     if (currentUnitId) {
-      await db.collection('units').updateOne({ id: String(currentUnitId) }, { $set: { status: 'vacant', currentTenantId: null, currentLeaseId: null, updatedAt: nowIso } })
+      await db.collection('units').updateOne(
+        { id: String(currentUnitId) },
+        { $set: { status: 'vacant', currentTenantId: null, currentTenantName: null, currentLeaseId: null, updatedAt: nowIso } }
+      )
       await db.collection('leases').updateMany(
-        { tenantId: String(tenantId), unitId: String(currentUnitId), status: 'active' },
+        { tenantId: String(tenantId), unitId: String(currentUnitId), status: { $in: ['active', 'pending_deposit'] } },
         { $set: { status: 'transferred', transferredAt: nowIso } }
       )
     }
@@ -253,12 +297,31 @@ router.post('/leases/transfer', authenticateToken, requireRole(['landlord']), as
     await db.collection('leases').insertOne(newLease)
 
     // 3. Occupy new unit
-    await db.collection('units').updateOne({ id: newUnit.id }, { $set: { status: 'occupied', currentTenantId: String(tenantId), currentLeaseId: newLeaseId, updatedAt: nowIso } })
+    await db.collection('units').updateOne(
+      { id: newUnit.id },
+      { $set: { status: 'occupied', currentTenantId: String(tenantId), currentTenantName: tenant.name, currentLeaseId: newLeaseId, updatedAt: nowIso } }
+    )
 
-    // 4. Update tenant assigned unit
-    await db.collection('tenants').updateOne({ id: String(tenantId) }, {
-      $set: { currentUnitId: newUnit.id, currentUnitNumber: newUnit.unitNumber, currentLeaseId: newLeaseId, updatedAt: nowIso }
-    })
+    // 4. Refresh tenant's active leases list (preserves any other active leases!)
+    const allTenantLeases = await db.collection('leases')
+      .find({ tenantId: String(tenantId), status: { $in: ['active', 'pending_deposit'] } })
+      .sort({ startDate: 1, createdAt: 1 })
+      .toArray()
+    const primaryLease = allTenantLeases[0] || newLease
+    const unitNumbers = allTenantLeases.map((l: any) => l.unitNumber).filter(Boolean)
+
+    await db.collection('tenants').updateOne(
+      { id: String(tenantId) },
+      {
+        $set: {
+          currentUnitId: primaryLease.unitId,
+          currentUnitNumber: primaryLease.unitNumber,
+          currentLeaseId: primaryLease.id,
+          unitNumbers,
+          updatedAt: nowIso
+        }
+      }
+    )
 
     logServerEvent('LEASES', `Transferred resident ${tenant.name} to Unit ${newUnit.unitNumber} directly in MongoDB`)
     if (tenant.phone) {

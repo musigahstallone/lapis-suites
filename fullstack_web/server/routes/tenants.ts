@@ -209,158 +209,238 @@ router.put('/tenants/:id', authenticateToken, async (req: AuthRequest, res: Resp
   }
 })
 
-// Comprehensive ledger & deposit reconciliation logic
-export async function runTenantLedgerReconciliation(id: string) {
+// Helper: parse YYYY-MM-DD safely into UTC midnight Date
+function parseIsoDateOnly(raw?: string): Date | null {
+  if (!raw) return null
+  const m = String(raw).trim().match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return null
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])))
+  return isNaN(d.getTime()) ? null : d
+}
+
+// Helper: compute billable months strictly within [startDate, min(today, endDate)]
+function computeBillableMonthsForLease(startDateStr?: string, endDateStr?: string, nowRef: Date = new Date()): number {
+  const start = parseIsoDateOnly(startDateStr)
+  if (!start) return 1
+
+  const todayUtc = new Date(Date.UTC(nowRef.getUTCFullYear(), nowRef.getUTCMonth(), nowRef.getUTCDate()))
+  // If lease has not started yet, 0 rent months have accrued
+  if (todayUtc.getTime() < start.getTime()) {
+    return 0
+  }
+
+  const end = parseIsoDateOnly(endDateStr)
+  const effectiveEnd = (end && todayUtc.getTime() > end.getTime()) ? end : todayUtc
+
+  let months =
+    (effectiveEnd.getUTCFullYear() - start.getUTCFullYear()) * 12 +
+    (effectiveEnd.getUTCMonth() - start.getUTCMonth()) +
+    1
+
+  // Cap at total lease term months when endDate is specified
+  if (end && end.getTime() >= start.getTime()) {
+    const termMonths = Math.max(
+      1,
+      (end.getUTCFullYear() - start.getUTCFullYear()) * 12 +
+      (end.getUTCMonth() - start.getUTCMonth()) +
+      (end.getUTCDate() >= start.getUTCDate() ? 1 : 0)
+    )
+    months = Math.min(months, termMonths)
+  }
+
+  return Math.max(1, months)
+}
+
+// Comprehensive multi-unit, date-bounded ledger & deposit reconciliation logic
+export async function runTenantLedgerReconciliation(
+  id: string,
+  options?: { targetLeaseId?: string | null; targetUnitNumber?: string | null }
+) {
   const db = getDb()
 
   const tenant = await db.collection('tenants').findOne({ id })
   if (!tenant) throw new Error('Tenant not found')
 
-  const lease = await db.collection('leases').findOne({
-    tenantId: id,
-    status: { $in: ['active', 'pending_deposit', 'pending'] }
-  }) || await db.collection('leases').findOne({ tenantId: id })
+  // Load ALL active/pending_deposit leases for this tenant sorted by startDate (first = default lease)
+  let leases = await db.collection('leases')
+    .find({
+      tenantId: id,
+      status: { $in: ['active', 'pending_deposit', 'pending'] }
+    })
+    .sort({ startDate: 1, createdAt: 1 })
+    .toArray()
 
-  const unitNumber = tenant.currentUnitNumber || lease?.unitNumber || ''
-  const monthlyRent = Number(lease?.monthlyRent || 0)
-  const depositAmount = Number(lease?.depositAmount !== undefined ? lease.depositAmount : monthlyRent)
-
-  // 1. Gather all verified payments for this tenant
-  const queryConditions: any[] = [
-    { tenantId: id }
-  ]
-  if (tenant.email) queryConditions.push({ payerEmail: tenant.email })
-  if (tenant.phone) {
-    const cleanPhone = tenant.phone.replace(/\D/g, '')
-    if (cleanPhone.length >= 9) {
-      queryConditions.push({ phoneNumber: { $regex: cleanPhone.slice(-9) } })
-    }
-  }
-  if (unitNumber) {
-    queryConditions.push({ unitNumber })
-    queryConditions.push({ billRefNumber: unitNumber })
-  }
-  if (lease) {
-    queryConditions.push({ leaseId: lease.id })
+  if (leases.length === 0) {
+    const fallbackLease = await db.collection('leases').findOne({ tenantId: id }, { sort: { createdAt: -1 } })
+    if (fallbackLease) leases = [fallbackLease]
   }
 
-  const txs = await db.collection('transactions').find({
+  const primaryLease = leases[0] || null
+  const leaseIds = leases.map((l: any) => l.id).filter(Boolean)
+  const leaseUnitNumbers = leases.map((l: any) => l.unitNumber).filter(Boolean)
+
+  // 1. Gather ONLY verified transactions belonging strictly to THIS tenant (NEVER cross-match by shared phone!)
+  const queryConditions: any[] = [{ tenantId: id }]
+  if (leaseIds.length > 0) {
+    queryConditions.push({ leaseId: { $in: leaseIds } })
+  }
+  if (leaseUnitNumbers.length > 0) {
+    // Only include unassigned/null tenantId transactions matching this tenant's leased units
+    queryConditions.push({ tenantId: null, unitNumber: { $in: leaseUnitNumbers } })
+  }
+
+  const allTxs = await db.collection('transactions').find({
     $or: queryConditions,
     status: { $in: ['reconciled', 'completed', 'paid'] }
   }).sort({ date: 1, timestamp: 1, _id: 1 }).toArray()
 
-  const totalPaid = txs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
-
-  // 2. Calculate elapsed billing months
-  let monthsBilled = 1
-  const baseStartDate = lease?.startDate || tenant.moveInDate || new Date().toISOString().slice(0, 10)
-  const startParts = baseStartDate.split('-').map(Number)
-  if (startParts.length === 3) {
-    const now = new Date()
-    const startYear = startParts[0]
-    const startMonth = startParts[1] - 1
-    const nowYear = now.getFullYear()
-    const nowMonth = now.getMonth()
-    const monthDiff = (nowYear - startYear) * 12 + (nowMonth - startMonth)
-    monthsBilled = Math.max(1, monthDiff + 1)
-  }
-
-  // 3. Contractual Obligation: Deposit + Elapsed Months of Rent
-  const totalBilled = depositAmount + (monthsBilled * monthlyRent)
-
-  // 4. Deposit Satisfaction Logic:
-  // First money paid goes strictly toward Security Deposit
-  const depositPaid = totalPaid >= depositAmount
-  const depositStatus = depositPaid ? 'paid' : (totalPaid > 0 ? 'partially_paid' : 'pending')
-  const leaseStatus = depositPaid ? 'active' : 'pending_deposit'
-
-  // Update payment allocations & descriptions for transactions:
-  let runningPaid = 0
-  for (const tx of txs) {
-    const prevPaid = runningPaid
-    runningPaid += Number(tx.amount || 0)
-
-    let paymentType = 'rent'
-    let notes = tx.notes || `Payment for Unit ${unitNumber}`
-
-    if (prevPaid < depositAmount) {
-      if (runningPaid <= depositAmount) {
-        paymentType = 'deposit'
-        notes = `Security Deposit allocation (${tx.reference || 'Ref'}) - Reconciled`
-      } else {
-        paymentType = 'deposit_and_rent'
-        const depositPart = depositAmount - prevPaid
-        const rentPart = Number(tx.amount || 0) - depositPart
-        notes = `Security Deposit (KES ${depositPart}) + Rent (KES ${rentPart}) - Reconciled`
-      }
-    } else {
-      paymentType = 'rent'
-      notes = `Rent payment (${tx.reference || 'Ref'}) - Reconciled`
-    }
-
-    await db.collection('transactions').updateOne(
-      { _id: tx._id },
-      {
-        $set: {
-          tenantId: id,
-          tenantName: tenant.name,
-          leaseId: lease?.id || tx.leaseId || null,
-          unitNumber: unitNumber || tx.unitNumber,
-          status: 'reconciled',
-          reconciled: true,
-          paymentType,
-          notes
-        }
-      }
-    )
-  }
-
-  // 5. Compute Net Standing & Dynamic Due Date
-  const diff = totalPaid - totalBilled
-  let balance = 0
-  let arrearsBalance = 0
-  let accountCredit = 0
-
-  if (diff > 0) {
-    accountCredit = diff
-    balance = 0
-    arrearsBalance = 0
-  } else if (diff < 0) {
-    balance = Math.abs(diff)
-    arrearsBalance = Math.abs(diff)
-    accountCredit = 0
-  }
-
-  // Dynamic next payment due date from Settings (MongoDB)
   const rentDueDay = await getRentDueDay()
-  let monthsToAdvance = 1
-  if (monthlyRent > 0 && accountCredit >= monthlyRent) {
-    monthsToAdvance += Math.floor(accountCredit / monthlyRent)
-  }
-  const targetDate = new Date(startParts[0] || new Date().getFullYear(), (startParts[1] ? startParts[1] - 1 : new Date().getMonth()) + monthsToAdvance, rentDueDay)
-  const nextPaymentDueDate = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${String(rentDueDay).padStart(2, '0')}`
-
   const nowIso = new Date().toISOString()
 
-  // 6. Update Lease Entity in MongoDB
-  let updatedLease = null
-  if (lease) {
-    await db.collection('leases').updateOne(
-      { id: lease.id },
-      {
-        $set: {
-          tenantId: id,
-          tenantName: tenant.name,
-          depositPaid,
-          depositStatus,
-          status: leaseStatus,
-          nextPaymentDueDate,
-          updatedAt: nowIso
-        }
-      }
-    )
-    updatedLease = await db.collection('leases').findOne({ id: lease.id }, { projection: { _id: 0 } })
+  // Determine the default target lease when a transaction has no explicit unit/lease match
+  const defaultLease =
+    (options?.targetLeaseId ? leases.find((l: any) => l.id === options.targetLeaseId) : null) ||
+    (options?.targetUnitNumber ? leases.find((l: any) => l.unitNumber === options.targetUnitNumber) : null) ||
+    primaryLease
+
+  // Bucket transactions strictly to their corresponding lease (so multi-unit tenants never cross-corrupt)
+  const txByLeaseId = new Map<string, any[]>()
+  for (const l of leases) txByLeaseId.set(l.id, [])
+
+  for (const tx of allTxs) {
+    let matchedLease =
+      (tx.leaseId ? leases.find((l: any) => l.id === tx.leaseId) : null) ||
+      (tx.unitNumber ? leases.find((l: any) => l.unitNumber === tx.unitNumber) : null) ||
+      (tx.billRefNumber ? leases.find((l: any) => l.unitNumber === tx.billRefNumber || `LAPIS-${l.unitNumber}` === tx.billRefNumber) : null) ||
+      defaultLease
+
+    if (matchedLease) {
+      txByLeaseId.get(matchedLease.id)!.push(tx)
+    }
   }
+
+  let aggregatePaid = 0
+  let aggregateBilled = 0
+  let aggregateBalance = 0
+  let aggregateCredit = 0
+  let earliestNextDueDate = ''
+  let primaryUpdatedLease: any = null
+
+  if (leases.length === 0) {
+    // Tenant has no leases: any reconciled payments count as account credit
+    aggregatePaid = allTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
+    aggregateCredit = aggregatePaid
+  } else {
+    for (const lease of leases) {
+      const leaseTxs = txByLeaseId.get(lease.id) || []
+      const leasePaid = leaseTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
+      const monthlyRent = Number(lease.monthlyRent || 0)
+      const depositAmount = Number(lease.depositAmount !== undefined ? lease.depositAmount : monthlyRent)
+      const monthsBilled = computeBillableMonthsForLease(lease.startDate || tenant.moveInDate, lease.endDate)
+      const leaseBilled = depositAmount + (monthsBilled * monthlyRent)
+
+      const depositPaid = leasePaid >= depositAmount
+      const depositStatus = depositPaid ? 'paid' : (leasePaid > 0 ? 'partially_paid' : 'pending')
+      const leaseStatus =
+        lease.status === 'terminated' || lease.status === 'transferred'
+          ? lease.status
+          : (depositPaid ? 'active' : 'pending_deposit')
+
+      let runningPaid = 0
+      for (const tx of leaseTxs) {
+        const prevPaid = runningPaid
+        runningPaid += Number(tx.amount || 0)
+
+        let paymentType = 'rent'
+        let notes = tx.notes || `Payment for Unit ${lease.unitNumber}`
+        if (prevPaid < depositAmount) {
+          if (runningPaid <= depositAmount) {
+            paymentType = 'deposit'
+            notes = `Security Deposit (${tx.reference || 'Ref'})`
+          } else {
+            paymentType = 'deposit_and_rent'
+            const depositPart = depositAmount - prevPaid
+            const rentPart = Number(tx.amount || 0) - depositPart
+            notes = `Deposit (KES ${depositPart}) + Rent (KES ${rentPart})`
+          }
+        } else {
+          paymentType = 'rent'
+          notes = `Rent (${tx.reference || 'Ref'})`
+        }
+
+        await db.collection('transactions').updateOne(
+          { _id: tx._id },
+          {
+            $set: {
+              tenantId: id,
+              tenantName: tenant.name,
+              leaseId: lease.id,
+              unitId: lease.unitId || tx.unitId || null,
+              unitNumber: lease.unitNumber || tx.unitNumber || '',
+              status: 'reconciled',
+              reconciled: true,
+              paymentType,
+              notes
+            }
+          }
+        )
+      }
+
+      const diff = leasePaid - leaseBilled
+      const leaseBalance = diff < 0 ? Math.abs(diff) : 0
+      const leaseCredit = diff > 0 ? diff : 0
+
+      // Compute next due date respecting startDate, prepaid months, and endDate cap
+      const startDateObj = parseIsoDateOnly(lease.startDate || tenant.moveInDate) || new Date()
+      const endDateObj = parseIsoDateOnly(lease.endDate)
+      let monthsToAdvance = Math.max(1, monthsBilled)
+      if (monthlyRent > 0 && leaseCredit >= monthlyRent) {
+        monthsToAdvance += Math.floor(leaseCredit / monthlyRent)
+      }
+      let nextDueObj = new Date(Date.UTC(startDateObj.getUTCFullYear(), startDateObj.getUTCMonth() + monthsToAdvance, rentDueDay))
+      if (endDateObj && nextDueObj.getTime() > endDateObj.getTime()) {
+        nextDueObj = endDateObj
+      }
+      const leaseNextDue = `${nextDueObj.getUTCFullYear()}-${String(nextDueObj.getUTCMonth() + 1).padStart(2, '0')}-${String(nextDueObj.getUTCDate()).padStart(2, '0')}`
+
+      await db.collection('leases').updateOne(
+        { id: lease.id },
+        {
+          $set: {
+            tenantId: id,
+            tenantName: tenant.name,
+            depositPaid,
+            depositStatus,
+            status: leaseStatus,
+            leaseBalance,
+            leaseCredit,
+            monthsBilled,
+            nextPaymentDueDate: leaseNextDue,
+            updatedAt: nowIso
+          }
+        }
+      )
+
+      const updatedDoc = await db.collection('leases').findOne({ id: lease.id }, { projection: { _id: 0 } })
+      if (!primaryUpdatedLease || lease.id === defaultLease?.id) {
+        primaryUpdatedLease = updatedDoc
+      }
+
+      aggregatePaid += leasePaid
+      aggregateBilled += leaseBilled
+      aggregateBalance += leaseBalance
+      aggregateCredit += leaseCredit
+      if (!earliestNextDueDate || leaseNextDue < earliestNextDueDate) {
+        earliestNextDueDate = leaseNextDue
+      }
+    }
+  }
+
+  const nextPaymentDueDate = earliestNextDueDate || computeNextPaymentDueDate(rentDueDay)
+  const balance = aggregateBalance
+  const arrearsBalance = aggregateBalance
+  const accountCredit = aggregateBalance > 0 ? 0 : aggregateCredit
+  const updatedLease = primaryUpdatedLease
 
   // 7. Update Tenant Record in MongoDB
   await db.collection('tenants').updateOne(
@@ -371,24 +451,25 @@ export async function runTenantLedgerReconciliation(id: string) {
         arrearsBalance,
         accountCredit,
         nextPaymentDueDate,
+        unitNumbers: leaseUnitNumbers,
         updatedAt: nowIso
       }
     }
   )
   const updatedTenant = await db.collection('tenants').findOne({ id }, { projection: { _id: 0 } })
 
-  logServerEvent('RECONCILE', `Full Ledger Reconciliation completed for ${tenant.name} (Unit ${unitNumber}): Total Paid: KES ${totalPaid}, Billed: KES ${totalBilled}, Deposit Paid: ${depositPaid}, Credit: KES ${accountCredit}, Arrears: KES ${balance}, Next Due: ${nextPaymentDueDate}`)
+  logServerEvent('RECONCILE', `Reconciled ${tenant.name} (${leases.length} lease(s)): Paid KES ${aggregatePaid}, Billed KES ${aggregateBilled}, Balance KES ${balance}, Credit KES ${accountCredit}, Next Due ${nextPaymentDueDate}`)
 
   return {
     success: true,
     tenant: updatedTenant,
     lease: updatedLease,
     summary: {
-      totalPaid,
-      totalBilled,
-      depositAmount,
-      depositPaid,
-      monthsBilled,
+      totalPaid: aggregatePaid,
+      totalBilled: aggregateBilled,
+      depositAmount: Number(updatedLease?.depositAmount || 0),
+      depositPaid: Boolean(updatedLease?.depositPaid),
+      monthsBilled: Number(updatedLease?.monthsBilled || 0),
       accountCredit,
       balance,
       nextPaymentDueDate

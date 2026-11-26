@@ -19,13 +19,28 @@ class ResidentHomeScreen extends StatefulWidget {
 class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
   int _navIndex = 0; // 0: Home, 1: Payments, 2: Support, 3: Settings
   TenantModel? _tenant;
-  LeaseModel? _lease;
+  List<LeaseModel> _myLeases = [];
+  String? _selectedLeaseId;
   List<TransactionModel> _myTxs = [];
   List<MaintenanceTicket> _myTickets = [];
   List<NotificationModel> _notifications = [];
   bool _isLoading = true;
   bool _showBreakdown = false;
   String? _error;
+
+  List<LeaseModel> get _activeLeases => _myLeases.where((l) => l.isActive).toList();
+
+  LeaseModel? get _lease {
+    final active = _activeLeases;
+    if (active.isNotEmpty) {
+      if (_selectedLeaseId != null) {
+        final match = active.where((l) => l.id == _selectedLeaseId).toList();
+        if (match.isNotEmpty) return match.first;
+      }
+      return active.first;
+    }
+    return _myLeases.isNotEmpty ? _myLeases.first : null;
+  }
 
   final ScrollController _payScrollCtrl = ScrollController();
   int _payPage = 1;
@@ -92,7 +107,7 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
 
       final results = await Future.wait([
         ApiService.fetchTenantProfile(tenantId),
-        ApiService.fetchTenantLease(tenantId),
+        ApiService.fetchTenantLeases(tenantId),
         ApiService.fetchTenantTransactions(tenantId, page: 1, limit: 20),
         ApiService.fetchMaintenance(),
         ApiService.fetchSettings(),
@@ -100,7 +115,7 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
       ]);
 
       final profile = results[0] as TenantModel?;
-      final lease = results[1] as LeaseModel?;
+      final leases = results[1] as List<LeaseModel>;
       final txs = results[2] as List<TransactionModel>;
       final tickets = results[3] as List<MaintenanceTicket>;
       final notifs = results[5] as List<NotificationModel>;
@@ -108,7 +123,11 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
       if (mounted) {
         setState(() {
           _tenant = profile;
-          _lease = lease;
+          _myLeases = leases;
+          final active = leases.where((l) => l.isActive).toList();
+          if (active.isNotEmpty && (_selectedLeaseId == null || !active.any((l) => l.id == _selectedLeaseId))) {
+            _selectedLeaseId = active.first.id;
+          }
           _myTxs = txs;
           _myTickets = tickets;
           _notifications = notifs;
@@ -166,11 +185,13 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
       context,
       defaultPhone: t?.phone ?? ApiService.currentUser?['phone']?.toString() ?? '',
       defaultAmount: defaultAmt,
-      unitNumber: t?.currentUnitNumber.isNotEmpty == true
-          ? t!.currentUnitNumber
-          : (l?.unitNumber ?? ApiService.currentUser?['unitNumber']?.toString() ?? ''),
+      unitNumber: l?.unitNumber.isNotEmpty == true
+          ? l!.unitNumber
+          : (t?.currentUnitNumber.isNotEmpty == true
+              ? t!.currentUnitNumber
+              : ApiService.currentUser?['unitNumber']?.toString() ?? ''),
       tenantId: t?.id ?? ApiService.currentUser?['tenantId']?.toString(),
-      unitId: t?.currentUnitId ?? l?.unitId,
+      unitId: l?.unitId ?? t?.currentUnitId,
       leaseId: l?.id,
       payerName: t?.name ?? ApiService.currentUser?['name']?.toString(),
       onComplete: () => _loadResidentScope(silent: true),
@@ -181,18 +202,20 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
     showCreateMaintenanceSheet(
       context,
       isAdmin: false,
-      unitNumber: _tenant?.currentUnitNumber.isNotEmpty == true
-          ? _tenant!.currentUnitNumber
-          : (_lease?.unitNumber ?? ''),
-      unitId: _tenant?.currentUnitId ?? _lease?.unitId,
+      unitNumber: _lease?.unitNumber.isNotEmpty == true
+          ? _lease!.unitNumber
+          : (_tenant?.currentUnitNumber ?? ''),
+      unitId: _lease?.unitId ?? _tenant?.currentUnitId,
       onCreated: () => _loadResidentScope(silent: true),
     );
   }
 
   String _getHeaderSubtitle() {
-    final unitNum = _tenant?.currentUnitNumber.isNotEmpty == true
-        ? _tenant!.currentUnitNumber
-        : (_lease?.unitNumber ?? ApiService.currentUser?['unitNumber']?.toString() ?? '');
+    final unitNum = _lease?.unitNumber.isNotEmpty == true
+        ? _lease!.unitNumber
+        : (_tenant?.currentUnitNumber.isNotEmpty == true
+            ? _tenant!.currentUnitNumber
+            : ApiService.currentUser?['unitNumber']?.toString() ?? '');
     final unitType = _lease?.unitType.isNotEmpty == true ? formatUnitTypeLabel(_lease!.unitType) : '';
 
     if (unitNum.isNotEmpty && unitType.isNotEmpty) return 'Unit $unitNum · $unitType';
@@ -358,7 +381,43 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
           padding: const EdgeInsets.only(bottom: 28),
           sliver: SliverList(
             delegate: SliverChildListDelegate([
-              // 1. Clean White Fintech Hero Balance Card
+              // Conditional Multi-Unit Switcher (ONLY shown when resident holds 2+ active units)
+              if (_activeLeases.length > 1)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: _activeLeases.map((leaseItem) {
+                        final selected = leaseItem.id == l?.id;
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: GestureDetector(
+                            onTap: () => setState(() => _selectedLeaseId = leaseItem.id),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+                              decoration: BoxDecoration(
+                                color: selected ? C.navy : C.surface,
+                                borderRadius: BorderRadius.circular(99),
+                                border: Border.all(color: selected ? C.navy : C.border),
+                              ),
+                              child: Text(
+                                'Unit ${leaseItem.unitNumber}',
+                                style: sans(
+                                  12,
+                                  color: selected ? Colors.white : C.textSecondary,
+                                  weight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+
+              // 1. Clean White Fintech Hero Balance Card (color-coded balance text, no status pill badge)
               Container(
                 margin: const EdgeInsets.fromLTRB(16, 14, 16, 10),
                 padding: const EdgeInsets.all(18),
@@ -377,17 +436,9 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'ACCOUNT STANDING',
-                          style: sans(10, color: C.textMuted, weight: FontWeight.w700, letterSpacing: 0.7),
-                        ),
-                        hasDue
-                            ? StatusPill.amber('Payment Due')
-                            : (hasCredit ? StatusPill.mint('Prepaid') : StatusPill.mint('Current')),
-                      ],
+                    Text(
+                      hasDue ? 'BALANCE DUE' : (hasCredit ? 'ACCOUNT CREDIT' : 'ACCOUNT STANDING'),
+                      style: sans(10, color: C.textMuted, weight: FontWeight.w700, letterSpacing: 0.7),
                     ),
                     const SizedBox(height: 10),
                     Row(
@@ -408,7 +459,7 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
                           heroNumber,
                           style: flex(
                             28,
-                            color: C.textPrimary,
+                            color: hasDue ? C.roseText : (hasCredit ? C.mintText : C.navy),
                             weight: FontWeight.w700,
                             letterSpacing: -0.7,
                             height: 1.08,
@@ -608,9 +659,11 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
     );
   }
 
-  /// Resident payment row: full non-truncated M-Pesa confirmation code in monospace
+  /// Resident payment row: full non-truncated M-Pesa confirmation code in monospace (no Reconciled badge)
   Widget _buildPaymentRow(TransactionModel tx) {
     final rec = tx.reconciled;
+    final matchingLease = _myLeases.where((l) => l.unitNumber == tx.unitNumber).toList();
+    final unitType = matchingLease.isNotEmpty ? matchingLease.first.unitType : (_lease?.unitType ?? '');
     return OrbixListTile(
       icon: rec ? LapisIconName.arrowDownLeft : LapisIconName.clock,
       iconColor: rec ? C.mintText : C.amberText,
@@ -625,8 +678,8 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
       amountPrefix: 'KES',
       amount: tx.amount.toLocaleString(),
       amountColor: rec ? C.mintText : C.amberText,
-      status: rec ? StatusPill.mint('Reconciled', hasDot: false) : StatusPill.amber(tx.statusDisplayLabel),
-      onTap: () => showPaymentDetailsSheet(context, tx),
+      status: rec ? null : StatusPill.amber(tx.statusDisplayLabel),
+      onTap: () => showPaymentDetailsSheet(context, tx, unitTypeLabel: unitType),
     );
   }
 

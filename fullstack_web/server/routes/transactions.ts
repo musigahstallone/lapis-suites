@@ -21,7 +21,6 @@ router.get('/transactions', authenticateToken, async (req: AuthRequest, res: Res
       const orClauses: any[] = []
       if (user.tenantId) orClauses.push({ tenantId: user.tenantId })
       if (user.userId) orClauses.push({ tenantId: user.userId })
-      if (user.unitNumber) orClauses.push({ unitNumber: user.unitNumber })
       if (orClauses.length === 0) return res.json([])
       query = { $or: orClauses }
     } else {
@@ -186,7 +185,10 @@ router.post('/transactions', authenticateToken, async (req: AuthRequest, res: Re
     let recSummary: any = null
     if (isLandlord && newTx.tenantId) {
       try {
-        const recResult = await runTenantLedgerReconciliation(newTx.tenantId)
+        const recResult = await runTenantLedgerReconciliation(newTx.tenantId, {
+          targetLeaseId: newTx.leaseId,
+          targetUnitNumber: newTx.unitNumber
+        })
         if (recResult.lease) updatedLease = recResult.lease
         recSummary = recResult.summary
         await recordPaymentAgainstActiveLink({
@@ -282,6 +284,20 @@ router.post('/transactions/reconcile', authenticateToken, requireRole(['landlord
     const unit = unitId ? await db.collection('units').findOne({ id: String(unitId) }) : null
     if (!tenant) return res.status(404).json({ error: 'Tenant not found' })
 
+    // Resolve matching lease for multi-unit tenants (unit match -> first active lease)
+    const activeLeases = await db.collection('leases')
+      .find({ tenantId: tenant.id, status: { $in: ['active', 'pending_deposit'] } })
+      .sort({ startDate: 1, createdAt: 1 })
+      .toArray()
+    const matchedLease =
+      (unit ? activeLeases.find((l: any) => l.unitId === unit.id || l.unitNumber === unit.unitNumber) : null) ||
+      activeLeases[0] ||
+      null
+
+    const resolvedUnitId = unit ? unit.id : (matchedLease?.unitId || tenant.currentUnitId || null)
+    const resolvedUnitNumber = unit ? unit.unitNumber : (matchedLease?.unitNumber || tenant.currentUnitNumber || '')
+    const resolvedLeaseId = matchedLease?.id || tenant.currentLeaseId || null
+
     const nowIso = new Date().toISOString()
     const result = await db.collection('transactions').findOneAndUpdate(
       { id: String(transactionId) },
@@ -289,9 +305,9 @@ router.post('/transactions/reconcile', authenticateToken, requireRole(['landlord
         $set: {
           tenantId: tenant.id,
           tenantName: tenant.name,
-          unitId: unit ? unit.id : tenant.currentUnitId,
-          unitNumber: unit ? unit.unitNumber : tenant.currentUnitNumber,
-          leaseId: tenant.currentLeaseId,
+          unitId: resolvedUnitId,
+          unitNumber: resolvedUnitNumber,
+          leaseId: resolvedLeaseId,
           status: 'reconciled',
           reconciled: true,
           reconciledAt: nowIso,
@@ -305,7 +321,10 @@ router.post('/transactions/reconcile', authenticateToken, requireRole(['landlord
     if (result) {
       let recSummary: any = null
       try {
-        const recRes = await runTenantLedgerReconciliation(tenant.id)
+        const recRes = await runTenantLedgerReconciliation(tenant.id, {
+          targetLeaseId: resolvedLeaseId,
+          targetUnitNumber: resolvedUnitNumber
+        })
         recSummary = recRes.summary
         await recordPaymentAgainstActiveLink({
           tenantId: tenant.id,

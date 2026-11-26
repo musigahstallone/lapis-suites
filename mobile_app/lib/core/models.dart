@@ -121,6 +121,27 @@ String formatShortDate(String? raw) {
   return '${parsed.day} ${months[parsed.month - 1]} ${parsed.year}';
 }
 
+/// Joins date and 12-hour time cleanly: "26 Nov 2026 · 02:15 PM"
+String formatDateTimeDisplay(String? raw) {
+  if (raw == null || raw.trim().isEmpty) return '—';
+  final trimmed = raw.trim();
+  final parsed = DateTime.tryParse(trimmed.contains('T') ? trimmed : trimmed.replaceAll(' ', 'T'));
+  if (parsed == null) return formatShortDate(trimmed);
+  final local = parsed.isUtc ? parsed.toLocal() : parsed;
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  final day = local.day.toString().padLeft(2, '0');
+  final datePart = '$day ${months[local.month - 1]} ${local.year}';
+  final hasTime = trimmed.contains(':');
+  if (!hasTime) return datePart;
+  final ampm = local.hour >= 12 ? 'PM' : 'AM';
+  final hr12 = (local.hour % 12 == 0 ? 12 : local.hour % 12).toString().padLeft(2, '0');
+  final min = local.minute.toString().padLeft(2, '0');
+  return '$datePart · $hr12:$min $ampm';
+}
+
 class UnitModel {
   final String id;
   final String unitNumber;

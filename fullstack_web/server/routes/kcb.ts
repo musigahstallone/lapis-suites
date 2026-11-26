@@ -410,34 +410,59 @@ async function finalizeSuccessfulKcbPayment(params: {
   const normalizedPhone = normalizeKenyanPhone(params.phoneNumber || kcbTx?.phoneNumber || '')
 
   let tenant: any = null
-  if (normalizedPhone) {
-    tenant = await db.collection('tenants').findOne({
+  let lease: any = null
+
+  // Priority 1: Explicit leaseId or unitNumber selected on the STK Push request
+  if (kcbTx?.leaseId) {
+    lease = await db.collection('leases').findOne({ id: kcbTx.leaseId })
+    if (lease?.tenantId) tenant = await db.collection('tenants').findOne({ id: lease.tenantId })
+  }
+  if (!lease && kcbTx?.unitNumber) {
+    lease = await db.collection('leases').findOne({
+      unitNumber: kcbTx.unitNumber,
+      status: { $in: ['active', 'pending_deposit'] }
+    })
+    if (lease?.tenantId && !tenant) {
+      tenant = await db.collection('tenants').findOne({ id: lease.tenantId })
+    }
+  }
+
+  // Priority 2: Explicit tenantId from authenticated session or payment link
+  if (!tenant && kcbTx?.tenantId) {
+    tenant = await db.collection('tenants').findOne({ id: kcbTx.tenantId })
+  }
+
+  // Priority 3: Phone fallback ONLY if tenant still unresolved (defaults to first active lease when a phone is tied to 2+ units)
+  if (!tenant && normalizedPhone) {
+    const phoneMatches = await db.collection('tenants').find({
       $or: [
         { phone: normalizedPhone },
         { phone: `+${normalizedPhone}` },
         { phone: `0${normalizedPhone.slice(3)}` }
       ]
-    })
-  }
-  if (!tenant && kcbTx?.tenantId) {
-    tenant = await db.collection('tenants').findOne({ id: kcbTx.tenantId })
-  }
-  if (!tenant && kcbTx?.unitNumber) {
-    tenant = await db.collection('tenants').findOne({ currentUnitNumber: kcbTx.unitNumber })
-  }
-  if (!tenant && kcbTx?.unitNumber) {
-    const l = await db.collection('leases').findOne({ unitNumber: kcbTx.unitNumber })
-    if (l) tenant = await db.collection('tenants').findOne({ id: l.tenantId })
+    }).sort({ createdAt: 1 }).toArray()
+    tenant = phoneMatches[0] || null
   }
 
-  const lease = tenant ? await db.collection('leases').findOne({
-    tenantId: tenant.id,
-    status: { $in: ['active', 'pending_deposit'] }
-  }) : null
+  // Resolve target lease for this tenant: selected unit -> first active lease (default)
+  if (tenant && !lease) {
+    const activeLeases = await db.collection('leases')
+      .find({
+        tenantId: tenant.id,
+        status: { $in: ['active', 'pending_deposit'] }
+      })
+      .sort({ startDate: 1, createdAt: 1 })
+      .toArray()
 
-  const unitNumber = tenant?.currentUnitNumber || lease?.unitNumber || kcbTx?.unitNumber || ''
-  const unitId = tenant?.currentUnitId || lease?.unitId || null
-  const leaseId = tenant?.currentLeaseId || lease?.id || null
+    lease =
+      (kcbTx?.unitNumber ? activeLeases.find((l: any) => l.unitNumber === kcbTx.unitNumber) : null) ||
+      activeLeases[0] ||
+      null
+  }
+
+  const unitNumber = lease?.unitNumber || kcbTx?.unitNumber || tenant?.currentUnitNumber || ''
+  const unitId = lease?.unitId || tenant?.currentUnitId || null
+  const leaseId = lease?.id || tenant?.currentLeaseId || null
   const tenantName = tenant?.name || kcbTx?.callerName || 'Resident'
   const ref = (params.mpesaReceiptNumber || `KCB${Date.now().toString().slice(-6)}`).trim().toUpperCase()
   const txDate = nowIso.slice(0, 10)
@@ -479,7 +504,10 @@ async function finalizeSuccessfulKcbPayment(params: {
 
     if (tenant?.id) {
       try {
-        const recResult = await runTenantLedgerReconciliation(tenant.id)
+        const recResult = await runTenantLedgerReconciliation(tenant.id, {
+          targetLeaseId: leaseId,
+          targetUnitNumber: unitNumber
+        })
         if (recResult.lease) updatedLease = recResult.lease
         recSummary = recResult.summary
       } catch (err: any) {

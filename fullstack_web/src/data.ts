@@ -342,7 +342,21 @@ export interface LoginResult {
   error?: string
 }
 
+function clearClientStoreState(): void {
+  store.units = []
+  store.tenants = []
+  store.leases = []
+  store.transactions = []
+  store.maintenanceRequests = []
+  store.notifications = []
+  store.kcbLogs = []
+  store.searchQuery = ''
+}
+
 async function completeAuthenticatedSession(token: string, user: any): Promise<void> {
+  // Always wipe previous account's in-memory collections BEFORE loading the new user
+  clearClientStoreState()
+
   if (typeof window !== 'undefined') {
     localStorage.setItem('lapis_jwt_token', token)
   }
@@ -557,8 +571,10 @@ export function loginAs(role: 'landlord' | 'tenant', email?: string) {
 export const login = loginAs
 
 export function logout() {
+  clearClientStoreState()
   if (typeof window !== 'undefined') {
     localStorage.removeItem('lapis_jwt_token')
+    localStorage.removeItem(SESSION_KEY)
   }
   store.session = {
     isAuthenticated: false,
@@ -566,10 +582,11 @@ export function logout() {
     id: '',
     name: '',
     email: '',
+    tenantId: null,
+    unitNumber: '',
     avatarInitials: '',
     token: null
   }
-  saveSession()
   if (typeof window !== 'undefined') {
     import('./sse').then(m => m.reconnectSSE()).catch(() => {})
   }

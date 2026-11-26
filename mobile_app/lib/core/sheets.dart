@@ -87,12 +87,13 @@ Widget _detailRow(String label, String value, {bool isMono = false, Color? value
   );
 }
 
-/// 1. Payment Receipt Details Sheet (Landlords can also Approve & Reconcile pending Paybill claims)
+/// 1. Payment Receipt Details Sheet (Clean fintech receipt: Resident Name header, M-Pesa Receipt, Date & Time, Channel, Unit Reference)
 void showPaymentDetailsSheet(
   BuildContext context,
   TransactionModel tx, {
   bool isAdmin = false,
   List<TenantModel> tenants = const [],
+  String? unitTypeLabel,
   VoidCallback? onReconciled,
 }) {
   TenantModel? selectedTenant;
@@ -104,6 +105,16 @@ void showPaymentDetailsSheet(
   }
   bool isApproving = false;
   String? errorMsg;
+
+  final headerName = (tx.tenantName != null && tx.tenantName!.trim().isNotEmpty)
+      ? tx.tenantName!.trim()
+      : ((tx.payerName != null && tx.payerName!.trim().isNotEmpty) ? tx.payerName!.trim() : 'Payment Receipt');
+
+  final rawUnit = (tx.unitNumber ?? '').trim();
+  final cleanUnitType = (unitTypeLabel ?? '').trim();
+  final unitRef = rawUnit.isNotEmpty
+      ? (cleanUnitType.isNotEmpty ? 'Unit $rawUnit · ${formatUnitTypeLabel(cleanUnitType)}' : 'Unit $rawUnit')
+      : '—';
 
   showModalBottomSheet(
     context: context,
@@ -128,17 +139,40 @@ void showPaymentDetailsSheet(
               _sheetHandle(),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Text('Payment Receipt', style: flex(14.5, color: C.textPrimary)),
-                  tx.reconciled
-                      ? StatusPill.mint('Reconciled')
-                      : StatusPill.amber(tx.statusDisplayLabel),
+                  Expanded(
+                    child: Text(
+                      headerName,
+                      style: flex(16, color: C.textPrimary, weight: FontWeight.w700),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Text('KES', style: sans(11, color: C.textMuted, weight: FontWeight.w500)),
+                      const SizedBox(width: 4),
+                      Text(
+                        tx.amount.toLocaleString(),
+                        style: flex(
+                          17,
+                          color: tx.reconciled ? C.mintText : C.amberText,
+                          weight: FontWeight.w700,
+                          fontFeatures: kTabularNums,
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
               const SizedBox(height: 14),
               if (tx.isPendingVerification && !isAdmin) ...[
                 const InlineAlert(
-                  message: 'Awaiting management verification. Your balance will update as soon as approved.',
+                  message: 'Awaiting management verification.',
                   isInfo: true,
                 ),
                 const SizedBox(height: 12),
@@ -151,24 +185,21 @@ void showPaymentDetailsSheet(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
                   color: C.cardSubtle,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: C.border),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: C.border.withValues(alpha: 0.75)),
                 ),
                 child: Column(
                   children: [
-                    _detailRow('Reference', tx.reference, isMono: true),
+                    _detailRow('M-Pesa Receipt', tx.reference, isMono: true),
+                    const Divider(height: 14, color: C.borderLight),
                     _detailRow(
-                      'Amount',
-                      'KES ${tx.amount.toLocaleString()}',
-                      valueColor: tx.reconciled ? C.mintText : C.amberText,
+                      'Date & Time',
+                      formatDateTimeDisplay(tx.timestamp.isNotEmpty ? tx.timestamp : tx.date),
                     ),
-                    if (tx.tenantName != null && tx.tenantName!.isNotEmpty)
-                      _detailRow('Resident', tx.tenantName!),
-                    if (tx.unitNumber != null && tx.unitNumber!.isNotEmpty)
-                      _detailRow('Unit', 'Unit ${tx.unitNumber}'),
-                    _detailRow('Channel', formatPaymentMethodLabel(tx.method)),
-                    _detailRow('Date', formatShortDate(tx.timestamp.isNotEmpty ? tx.timestamp : tx.date)),
-                    if (tx.notes.isNotEmpty) _detailRow('Notes', tx.notes),
+                    const Divider(height: 14, color: C.borderLight),
+                    _detailRow('Payment Channel', formatPaymentMethodLabel(tx.method)),
+                    const Divider(height: 14, color: C.borderLight),
+                    _detailRow('Unit Reference', unitRef),
                   ],
                 ),
               ),

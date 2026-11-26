@@ -158,122 +158,74 @@ function handlePrintPdf() {
   const standing = tenant ? getTenantFinancialStanding(tenant) : null
   printReceiptPdf(props.transaction, tenant, lease, standing)
 }
+const formattedDateTime = computed(() => {
+  const tx = props.transaction
+  if (!tx) return '—'
+  const raw = tx.timestamp || tx.date
+  if (!raw) return '—'
+  const d = new Date(raw.includes('T') ? raw : raw.replace(' ', 'T'))
+  if (isNaN(d.getTime())) return raw
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const day = String(d.getDate()).padStart(2, '0')
+  const hr24 = d.getHours()
+  const ampm = hr24 >= 12 ? 'PM' : 'AM'
+  const hr12 = String(hr24 % 12 || 12).padStart(2, '0')
+  const min = String(d.getMinutes()).padStart(2, '0')
+  return `${day} ${months[d.getMonth()]} ${d.getFullYear()} · ${hr12}:${min} ${ampm}`
+})
+
+const paymentChannelLabel = computed(() => {
+  const m = (props.transaction?.method || '').toLowerCase()
+  if (m.includes('stk')) return 'M-Pesa STK Push'
+  if (m.includes('paybill')) return 'M-Pesa Paybill'
+  if (m.includes('bank')) return 'Bank Transfer'
+  if (m.includes('cash')) return 'Cash'
+  return props.transaction?.method || 'M-Pesa'
+})
+
+const unitReferenceLabel = computed(() => {
+  const tx = props.transaction
+  if (!tx?.unitNumber) return '—'
+  const unitObj = store.units.find(u => u.unitNumber === tx.unitNumber || u.id === tx.unitId)
+  const leaseObj = store.leases.find(l => l.id === tx.leaseId || l.unitNumber === tx.unitNumber)
+  const rawType = unitObj?.type || leaseObj?.unitType || ''
+  const prettyType = rawType
+    ? rawType.split(/[-_\s]+/).filter(Boolean).map((w: string) => w[0].toUpperCase() + w.slice(1).toLowerCase()).join(' ')
+    : ''
+  return prettyType ? `Unit ${tx.unitNumber} · ${prettyType}` : `Unit ${tx.unitNumber}`
+})
+
+const residentTitle = computed(() => {
+  const tx = props.transaction
+  return tx?.tenantName || tx?.payerName || 'Payment Receipt'
+})
 </script>
 
 <template>
-  <SideSheet :open="open" title="Payment Details" :subtitle="transaction ? `Reference: ${transaction.reference}` : ''"
+  <SideSheet :open="open" :title="residentTitle" :subtitle="transaction ? formatKES(transaction.amount) : ''"
     @close="emit('close')">
     <div v-if="transaction" class="tx-details-content">
-      <!-- Concise Amount & Status Header -->
-      <div class="summary-box">
-        <div>
-          <span class="sub-label">Payment Amount</span>
-          <div class="amount-display">{{ formatKES(transaction.amount) }}</div>
-        </div>
-        <div>
-          <span v-if="transaction.status === 'reconciled'" class="badge paid">
-            <CheckCircle2 :size="12" /> Reconciled
-          </span>
-          <span v-else class="badge overdue">
-            <AlertTriangle :size="12" /> Unassigned
-          </span>
-        </div>
-      </div>
-
-      <!-- Specific Tenant and Unit Reconciled To -->
+      <!-- Clean Receipt Details -->
       <div class="section-card">
-        <h3 class="section-header">
-          <Building2 :size="15" />
-          <span>Reconciled Tenancy</span>
-        </h3>
-
-        <div v-if="transaction.reconciled && transaction.tenantId" class="reconciled-grid">
-          <div class="info-cell">
-            <span class="cell-label">Reconciled Resident</span>
-            <strong class="cell-value">{{ transaction.tenantName }}</strong>
-          </div>
-
-          <div class="info-cell">
-            <span class="cell-label">Reconciled Unit</span>
-            <strong class="cell-value">Unit {{ transaction.unitNumber }}</strong>
-          </div>
-
-          <div class="info-cell">
-            <span class="cell-label">Payment Date</span>
-            <span class="cell-value mono">{{ transaction.date }}</span>
-          </div>
-
-          <div class="info-cell">
-            <span class="cell-label">Payment Channel</span>
-            <span class="cell-value" style="text-transform: capitalize;">
-              {{ transaction.method.replace('_', ' ') }}
-            </span>
-          </div>
-
-          <div class="info-cell">
-            <span class="cell-label">Payment Verification</span>
-            <span class="cell-value">
-              <span
-                v-if="transaction.source === 'callback' || transaction.reconciledBy?.includes('Webhook') || transaction.method === 'stk_push'"
-                class="badge"
-                style="background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; font-size: 0.74rem;">
-                ● Verified via M-Pesa
-              </span>
-              <span v-else class="badge"
-                style="background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; font-size: 0.74rem;">
-                ● Management Entry
-              </span>
-            </span>
-          </div>
-        </div>
-
-        <div v-else class="unassigned-notice">
-          <AlertTriangle :size="16" />
-          <span>This payment has not yet been assigned to a tenant or unit.</span>
-        </div>
-      </div>
-
-      <!-- Payment Receipt & Verification Details -->
-      <div class="section-card">
-        <h3 class="section-header">
-          <FileText :size="15" />
-          <span>Payment Receipt Details</span>
-        </h3>
-
         <div v-if="callbackPayload" class="payload-table">
           <div class="payload-row">
-            <span class="payload-key">Receipt Reference</span>
+            <span class="payload-key">M-Pesa Receipt</span>
             <strong class="payload-val mono">{{ callbackPayload.TransID }}</strong>
           </div>
 
           <div class="payload-row">
-            <span class="payload-key">Payer Mobile</span>
-            <strong class="payload-val mono">{{ callbackPayload.MSISDN }}</strong>
-          </div>
-
-          <div class="payload-row">
-            <span class="payload-key">Payer Name</span>
-            <span class="payload-val">{{ callbackPayload.PayerName }}</span>
-          </div>
-
-          <div class="payload-row">
-            <span class="payload-key">Account / Unit Ref</span>
-            <span class="payload-val mono">{{ callbackPayload.BillRefNumber }}</span>
-          </div>
-
-          <div class="payload-row">
-            <span class="payload-key">Amount Paid</span>
-            <strong class="payload-val text-positive">{{ formatKES(callbackPayload.TransAmount) }}</strong>
-          </div>
-
-          <div class="payload-row">
-            <span class="payload-key">Payment Date & Time</span>
-            <span class="payload-val mono">{{ transaction.timestamp }}</span>
+            <span class="payload-key">Date &amp; Time</span>
+            <span class="payload-val">{{ formattedDateTime }}</span>
           </div>
 
           <div class="payload-row">
             <span class="payload-key">Payment Channel</span>
-            <span class="payload-val mono">{{ callbackPayload.BusinessShortCode }}</span>
+            <span class="payload-val">{{ paymentChannelLabel }}</span>
+          </div>
+
+          <div class="payload-row">
+            <span class="payload-key">Unit Reference</span>
+            <span class="payload-val">{{ unitReferenceLabel }}</span>
           </div>
         </div>
 

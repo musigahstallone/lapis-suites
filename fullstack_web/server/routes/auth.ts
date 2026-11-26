@@ -258,55 +258,55 @@ router.post('/login', loginRateLimiter, async (req: Request, res: Response) => {
       })
     }
 
-    // TENANT LOGIN FLOW
-    let unitNumber = user.unitNumber || ''
-    let tenantId = user.tenantId || null
-    const tenantDoc = await db.collection('tenants').findOne({
-      $or: [
-        { email: cleanEmail },
-        ...(user.tenantId ? [{ id: user.tenantId }] : []),
-        { id: user.id },
-        ...(user.unitNumber ? [{ currentUnitNumber: user.unitNumber }] : [])
-      ]
-    })
+    // TENANT LOGIN FLOW — strict email/tenantId isolation (never match by phone or unitNumber, never mutate leases/transactions)
+    let unitNumber = ''
+    let tenantId: string | null = user.tenantId || null
+    let tenantDoc = await db.collection('tenants').findOne({ email: cleanEmail })
+    if (!tenantDoc && user.tenantId) {
+      const byId = await db.collection('tenants').findOne({ id: user.tenantId })
+      if (byId && (!byId.email || byId.email.toLowerCase() === cleanEmail)) {
+        tenantDoc = byId
+      }
+    }
 
     if (tenantDoc) {
       tenantId = tenantDoc.id
-      unitNumber = tenantDoc.currentUnitNumber || unitNumber
-      const lease = await db.collection('leases').findOne({
-        $or: [
-          { tenantId: tenantDoc.id },
-          ...(unitNumber ? [{ unitNumber }] : []),
-          ...(tenantDoc.phone ? [{ phone: tenantDoc.phone }] : [])
-        ],
-        status: { $in: ['active', 'pending_deposit'] }
-      })
-      if (lease) {
-        unitNumber = lease.unitNumber || unitNumber
-        await db.collection('tenants').updateOne(
-          { id: tenantDoc.id },
-          { $set: { currentUnitId: lease.unitId, currentUnitNumber: lease.unitNumber, currentLeaseId: lease.id } }
-        )
-        await db.collection('users').updateOne(
-          { id: user.id },
-          { $set: { unitNumber: lease.unitNumber, tenantId: tenantDoc.id, ...(tenantDoc.phone && !user.phone ? { phone: tenantDoc.phone } : {}) } }
-        )
-        if (lease.tenantId !== tenantDoc.id) {
-          await db.collection('leases').updateOne({ id: lease.id }, { $set: { tenantId: tenantDoc.id } })
+      const activeLeases = await db.collection('leases')
+        .find({
+          tenantId: tenantDoc.id,
+          status: { $in: ['active', 'pending_deposit'] }
+        })
+        .sort({ startDate: 1, createdAt: 1 })
+        .toArray()
+
+      const primaryLease = activeLeases[0] || null
+      unitNumber = primaryLease?.unitNumber || tenantDoc.currentUnitNumber || ''
+      const activeUnitNumbers = activeLeases.map((l: any) => l.unitNumber).filter(Boolean)
+
+      await db.collection('tenants').updateOne(
+        { id: tenantDoc.id },
+        {
+          $set: {
+            currentUnitId: primaryLease ? primaryLease.unitId : null,
+            currentUnitNumber: unitNumber,
+            currentLeaseId: primaryLease ? primaryLease.id : null,
+            unitNumbers: activeUnitNumbers
+          }
         }
-        await db.collection('transactions').updateMany(
-          { unitNumber: lease.unitNumber },
-          { $set: { tenantId: tenantDoc.id } }
-        )
-      }
+      )
+      await db.collection('users').updateOne(
+        { id: user.id },
+        {
+          $set: {
+            unitNumber,
+            tenantId: tenantDoc.id,
+            ...(tenantDoc.phone && !user.phone ? { phone: tenantDoc.phone } : {})
+          }
+        }
+      )
     } else {
-      const lease = await db.collection('leases').findOne({
-        $or: [{ tenantId: user.id }, { tenantEmail: cleanEmail }, ...(unitNumber ? [{ unitNumber }] : [])],
-        status: { $in: ['active', 'pending_deposit'] }
-      })
-      if (lease && lease.unitNumber) {
-        unitNumber = lease.unitNumber
-      }
+      tenantId = null
+      unitNumber = ''
     }
 
     const tokenPayload: AuthUserPayload = {
@@ -676,23 +676,19 @@ router.post('/register/verify-otp', otpRateLimiter, async (req: Request, res: Re
     const initials = trimmedName.split(' ').map((p: string) => p[0]).join('').slice(0, 2).toUpperCase() || 'TN'
     const configuredDueDay = await getRentDueDay()
 
-    // Locate or create tenant profile
-    let tenantDoc = await db.collection('tenants').findOne({
-      $or: [
-        { email: cleanEmail },
-        { phone: cleanPhone },
-        { phone: `+${cleanPhone}` },
-        { phone: `0${cleanPhone.slice(3)}` }
-      ]
-    })
+    // Locate or create tenant profile STRICTLY by email (NEVER match another resident by shared phone!)
+    let tenantDoc = await db.collection('tenants').findOne({ email: cleanEmail })
 
     let assignedUnitNumber = tenantDoc?.currentUnitNumber || ''
     if (tenantDoc) {
       if (!assignedUnitNumber) {
-        const lease = await db.collection('leases').findOne({
-          tenantId: tenantDoc.id,
-          status: { $in: ['active', 'pending_deposit'] }
-        })
+        const lease = await db.collection('leases').findOne(
+          {
+            tenantId: tenantDoc.id,
+            status: { $in: ['active', 'pending_deposit'] }
+          },
+          { sort: { startDate: 1, createdAt: 1 } }
+        )
         if (lease?.unitNumber) {
           assignedUnitNumber = lease.unitNumber
           await db.collection('tenants').updateOne(
@@ -823,22 +819,19 @@ router.post('/register', async (req: Request, res: Response) => {
 
     let newTenantDoc: any = null
     let assignedUnitNumber = ''
-    const existingTenant = await db.collection('tenants').findOne({
-      $or: [
-        { email: cleanEmail },
-        ...(rawPhone ? [{ phone: rawPhone }] : []),
-        ...(cleanPhone ? [{ phone: cleanPhone }] : [])
-      ]
-    })
+    const existingTenant = await db.collection('tenants').findOne({ email: cleanEmail })
 
     if (existingTenant) {
       newTenantDoc = existingTenant
       assignedUnitNumber = existingTenant.currentUnitNumber || ''
       if (!assignedUnitNumber) {
-        const lease = await db.collection('leases').findOne({
-          tenantId: existingTenant.id,
-          status: { $in: ['active', 'pending_deposit'] }
-        })
+        const lease = await db.collection('leases').findOne(
+          {
+            tenantId: existingTenant.id,
+            status: { $in: ['active', 'pending_deposit'] }
+          },
+          { sort: { startDate: 1, createdAt: 1 } }
+        )
         if (lease && lease.unitNumber) {
           assignedUnitNumber = lease.unitNumber
           await db.collection('tenants').updateOne(
@@ -920,44 +913,29 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => 
 
     if (req.user.role === 'tenant' || user?.role === 'tenant') {
       const cleanEmail = (req.user.email || user?.email || '').toLowerCase()
-      const tenantDoc = await db.collection('tenants').findOne({
-        $or: [
-          { email: cleanEmail },
-          ...(tenantId ? [{ id: tenantId }] : []),
-          { id: req.user.userId }
-        ]
-      })
+      let tenantDoc = cleanEmail ? await db.collection('tenants').findOne({ email: cleanEmail }) : null
+      if (!tenantDoc && tenantId) {
+        const byId = await db.collection('tenants').findOne({ id: tenantId })
+        if (byId && (!byId.email || byId.email.toLowerCase() === cleanEmail)) {
+          tenantDoc = byId
+        }
+      }
 
       if (tenantDoc) {
         tenantId = tenantDoc.id
-        unitNumber = tenantDoc.currentUnitNumber || unitNumber
         phone = phone || tenantDoc.phone || ''
-        const lease = await db.collection('leases').findOne({
-          $or: [
-            { tenantId: tenantDoc.id },
-            ...(unitNumber ? [{ unitNumber }] : []),
-            ...(tenantDoc.phone ? [{ phone: tenantDoc.phone }] : [])
-          ],
-          status: { $in: ['active', 'pending_deposit'] }
-        })
-        if (lease) {
-          unitNumber = lease.unitNumber || unitNumber
-          await db.collection('tenants').updateOne(
-            { id: tenantDoc.id },
-            { $set: { currentUnitId: lease.unitId, currentUnitNumber: lease.unitNumber, currentLeaseId: lease.id } }
-          )
-          await db.collection('users').updateOne(
-            { id: req.user.userId },
-            { $set: { unitNumber: lease.unitNumber, tenantId: tenantDoc.id } }
-          )
-          if (lease.tenantId !== tenantDoc.id) {
-            await db.collection('leases').updateOne({ id: lease.id }, { $set: { tenantId: tenantDoc.id } })
-          }
-          await db.collection('transactions').updateMany(
-            { unitNumber: lease.unitNumber },
-            { $set: { tenantId: tenantDoc.id } }
-          )
-        }
+        const activeLeases = await db.collection('leases')
+          .find({
+            tenantId: tenantDoc.id,
+            status: { $in: ['active', 'pending_deposit'] }
+          })
+          .sort({ startDate: 1, createdAt: 1 })
+          .toArray()
+        const primaryLease = activeLeases[0] || null
+        unitNumber = primaryLease?.unitNumber || tenantDoc.currentUnitNumber || ''
+      } else {
+        tenantId = null
+        unitNumber = ''
       }
     } else if (user?.role === 'landlord') {
       phone = user.phone || ''

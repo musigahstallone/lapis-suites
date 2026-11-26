@@ -43,36 +43,45 @@ function downloadTxReceipt(tx: Transaction) {
 
 const resident = computed(() => {
   return (
-    store.tenants.find(t => t.id === store.session.tenantId || t.id === store.session.id) ||
     store.tenants.find(t => t.email && store.session.email && t.email.toLowerCase() === store.session.email.toLowerCase()) ||
-    store.tenants.find(t => store.session.name && t.name && t.name.toLowerCase().includes(store.session.name.toLowerCase())) ||
-    store.tenants[0]
-  )
-})
-
-const activeLease = computed(() => {
-  if (!resident.value) return null
-  return (
-    store.leases.find(l => (l.tenantId === resident.value?.id || l.tenantName?.toLowerCase() === resident.value?.name?.toLowerCase()) && (l.status === 'active' || l.status === 'pending_deposit')) ||
-    store.leases.find(l => (resident.value?.currentUnitNumber && l.unitNumber === resident.value?.currentUnitNumber)) ||
-    store.leases.find(l => l.tenantId === resident.value?.id) ||
+    store.tenants.find(t => store.session.tenantId && t.id === store.session.tenantId) ||
+    store.tenants.find(t => store.session.id && t.id === store.session.id) ||
     null
   )
 })
 
+const myActiveLeases = computed(() => {
+  if (!resident.value) return []
+  return store.leases.filter(
+    l => l.tenantId === resident.value?.id && (l.status === 'active' || l.status === 'pending_deposit')
+  )
+})
+
+const selectedLeaseId = ref<string>('')
+
+const activeLease = computed(() => {
+  if (!resident.value) return null
+  if (myActiveLeases.value.length > 0) {
+    return (
+      myActiveLeases.value.find(l => l.id === selectedLeaseId.value) ||
+      myActiveLeases.value[0]
+    )
+  }
+  return store.leases.find(l => l.tenantId === resident.value?.id) || null
+})
+
 const currentUnit = computed(() => {
   if (!resident.value) return null
-  if (resident.value.currentUnitId) {
-    const u = store.units.find(u => u.id === resident.value?.currentUnitId)
-    if (u) return u
-  }
   if (activeLease.value?.unitId) {
     const u = store.units.find(u => u.id === activeLease.value?.unitId)
     if (u) return u
   }
-  const unitNum = resident.value.currentUnitNumber || activeLease.value?.unitNumber || store.session.unitNumber
-  if (unitNum) {
-    const u = store.units.find(u => u.unitNumber === unitNum)
+  if (activeLease.value?.unitNumber) {
+    const u = store.units.find(u => u.unitNumber === activeLease.value?.unitNumber)
+    if (u) return u
+  }
+  if (resident.value.currentUnitId) {
+    const u = store.units.find(u => u.id === resident.value?.currentUnitId)
     if (u) return u
   }
   return null
@@ -85,7 +94,13 @@ const standing = computed(() => {
 const recentTransactions = computed(() => {
   if (!resident.value) return []
   return store.transactions
-    .filter(tx => tx.tenantId === resident.value?.id || (activeLease.value && tx.leaseId === activeLease.value.id) || (currentUnit.value && tx.unitNumber === currentUnit.value.unitNumber))
+    .filter(tx => {
+      if (tx.tenantId !== resident.value?.id) return false
+      if (myActiveLeases.value.length > 1 && activeLease.value) {
+        return !tx.leaseId || tx.leaseId === activeLease.value.id || tx.unitNumber === activeLease.value.unitNumber
+      }
+      return true
+    })
     .slice(0, 4)
 })
 
@@ -116,6 +131,28 @@ const tenantMaintenanceCount = computed(() => {
         </router-link>
       </div>
     </header>
+
+    <!-- Multi-Unit Switcher (ONLY displayed if this resident holds 2+ active units) -->
+    <div v-if="myActiveLeases.length > 1" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;">
+      <button
+        v-for="l in myActiveLeases"
+        :key="l.id"
+        type="button"
+        @click="selectedLeaseId = l.id"
+        :style="{
+          padding: '6px 14px',
+          borderRadius: '99px',
+          fontSize: '0.82rem',
+          fontWeight: 600,
+          cursor: 'pointer',
+          border: activeLease?.id === l.id ? '1px solid #111b35' : '1px solid #e2e8f0',
+          background: activeLease?.id === l.id ? '#111b35' : '#ffffff',
+          color: activeLease?.id === l.id ? '#ffffff' : '#475569'
+        }"
+      >
+        Unit {{ l.unitNumber }}
+      </button>
+    </div>
 
     <!-- Top Summary Cards (60-30-10 Disciplined Styling) -->
     <section class="tenant-summary" style="margin-bottom: 22px;">

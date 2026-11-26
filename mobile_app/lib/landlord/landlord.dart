@@ -517,10 +517,29 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
     );
   }
 
+  String _unitTypeFor(String? unitNumber) {
+    if (unitNumber == null || unitNumber.isEmpty || _data == null) return '';
+    for (final u in _data!.units) {
+      if (u.unitNumber == unitNumber) return u.type;
+    }
+    for (final l in _data!.leases) {
+      if (l.unitNumber == unitNumber && l.unitType.isNotEmpty) return l.unitType;
+    }
+    return '';
+  }
+
   Widget _buildResidentTile(TenantModel t) {
     final isUnassigned = t.currentUnitNumber.isEmpty;
     final avatarBg = t.hasArrears ? C.navySoftBg : C.mintBg;
     final avatarFg = t.hasArrears ? C.navy : C.mintText;
+
+    // Color-coded balance text (NO Due/Credit/Current pill badges):
+    // Arrears -> Red, 0 -> Navy/Blue, Credit -> Emerald Green
+    final amountColor = t.hasArrears
+        ? C.roseText
+        : (t.hasCredit ? C.mintText : C.navy);
+
+    final activeUnitCount = _data?.leases.where((l) => l.tenantId == t.id && l.isActive).length ?? 0;
 
     return OrbixListTile(
       leadingOverride: Container(
@@ -548,17 +567,16 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
               ),
             )
           : Text(
-              'Unit ${t.currentUnitNumber}',
+              activeUnitCount > 1
+                  ? 'Unit ${t.currentUnitNumber} +${activeUnitCount - 1} more'
+                  : 'Unit ${t.currentUnitNumber}',
               style: sans(11.5, color: C.textMuted, weight: FontWeight.w500, fontFeatures: kTabularNums),
             ),
       amountPrefix: 'KES',
       amount: t.hasArrears
           ? t.effectiveBalanceDue.toLocaleString()
           : (t.hasCredit ? t.accountCredit.toLocaleString() : '0'),
-      amountColor: t.hasArrears ? C.roseText : C.mintText,
-      status: t.hasArrears
-          ? StatusPill.amber('Due')
-          : (t.hasCredit ? StatusPill.mint('Credit') : StatusPill.mint('Current')),
+      amountColor: amountColor,
       onTap: () => Navigator.of(context)
           .push(MaterialPageRoute(builder: (_) => TenantDetailsPage(tenant: t)))
           .then((_) => _loadPortfolio(silent: true)),
@@ -583,6 +601,7 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
         tx,
         isAdmin: true,
         tenants: tenants,
+        unitTypeLabel: _unitTypeFor(tx.unitNumber),
         onReconciled: () => _loadPortfolio(silent: true),
       ),
     );
@@ -617,14 +636,13 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
       amountPrefix: 'KES',
       amount: tx.amount.toLocaleString(),
       amountColor: tx.reconciled ? C.textPrimary : C.amberText,
-      status: tx.reconciled
-          ? StatusPill.mint('Reconciled', hasDot: false)
-          : StatusPill.amber(tx.statusDisplayLabel),
+      status: tx.reconciled ? null : StatusPill.amber(tx.statusDisplayLabel),
       onTap: () => showPaymentDetailsSheet(
         context,
         tx,
         isAdmin: true,
         tenants: tenants,
+        unitTypeLabel: _unitTypeFor(tx.unitNumber),
         onReconciled: () => _loadPortfolio(silent: true),
       ),
     );

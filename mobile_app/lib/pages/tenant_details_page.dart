@@ -248,7 +248,7 @@ class _TenantDetailsPageState extends State<TenantDetailsPage> {
           ),
           const SizedBox(height: 12),
 
-          // Standing Card
+          // Standing Card (color-coded amount text, no Due/Credit/Settled badge)
           Container(
             padding: const EdgeInsets.all(15),
             decoration: BoxDecoration(
@@ -262,17 +262,9 @@ class _TenantDetailsPageState extends State<TenantDetailsPage> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Text('STANDING', style: sans(9.5, color: C.textMuted, weight: FontWeight.w700, letterSpacing: 0.6)),
-                        const SizedBox(width: 8),
-                        if (hasArrears)
-                          StatusPill.amber('Due')
-                        else if (hasCredit)
-                          StatusPill.mint('Credit')
-                        else
-                          StatusPill.mint('Settled'),
-                      ],
+                    Text(
+                      hasArrears ? 'BALANCE DUE' : (hasCredit ? 'ACCOUNT CREDIT' : 'BALANCE'),
+                      style: sans(9.5, color: C.textMuted, weight: FontWeight.w700, letterSpacing: 0.6),
                     ),
                     const SizedBox(height: 4),
                     Row(
@@ -285,7 +277,11 @@ class _TenantDetailsPageState extends State<TenantDetailsPage> {
                           hasArrears
                               ? t.effectiveBalanceDue.toLocaleString()
                               : (hasCredit ? t.accountCredit.toLocaleString() : '0'),
-                          style: flex(18, color: C.textPrimary, fontFeatures: kTabularNums),
+                          style: flex(
+                            18,
+                            color: hasArrears ? C.roseText : (hasCredit ? C.mintText : C.navy),
+                            fontFeatures: kTabularNums,
+                          ),
                         ),
                       ],
                     ),

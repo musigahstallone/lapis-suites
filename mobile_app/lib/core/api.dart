@@ -766,24 +766,32 @@ class ApiService {
     return null;
   }
 
-  static Future<LeaseModel?> fetchTenantLease(String tenantId) async {
-    if (tenantId.isEmpty) return null;
+  static Future<List<LeaseModel>> fetchTenantLeases(String tenantId) async {
+    if (tenantId.isEmpty) return [];
     try {
       final res = await http
           .get(Uri.parse('$baseUrl/api/leases?tenantId=$tenantId'), headers: _headers)
           .timeout(const Duration(seconds: 10));
       if (res.statusCode == 200) {
         final list = _safeDecode(res);
-        if (list is List && list.isNotEmpty) {
-          final active = list.cast<Map<String, dynamic>>().firstWhere(
-                (l) => l['status'] == 'active' || l['status'] == 'pending_deposit',
-                orElse: () => list.first as Map<String, dynamic>,
-              );
-          return LeaseModel.fromJson(active);
+        if (list is List) {
+          return list
+              .whereType<Map<String, dynamic>>()
+              .map((l) => LeaseModel.fromJson(l))
+              .toList();
         }
       }
     } catch (_) {}
-    return null;
+    return [];
+  }
+
+  static Future<LeaseModel?> fetchTenantLease(String tenantId) async {
+    final leases = await fetchTenantLeases(tenantId);
+    if (leases.isEmpty) return null;
+    return leases.firstWhere(
+      (l) => l.isActive,
+      orElse: () => leases.first,
+    );
   }
 
   static Future<List<TransactionModel>> fetchTenantTransactions(
