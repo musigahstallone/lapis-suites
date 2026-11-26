@@ -1,15 +1,19 @@
 import { Router, Request, Response } from 'express'
-import { getDb, isDbConnected } from '../db'
+import { getDb, isDbConnected, ensureDbConnected } from '../db'
 import { authenticateToken, requireRole, AuthRequest } from '../middleware/auth'
 import { logServerEvent } from '../middleware/logger'
 
 const router = Router()
 
-// GET /api/health (Public minimal health check — no internal DB host/name exposure)
-router.get('/health', (_req: Request, res: Response) => {
-  res.json({
+// GET /api/health (Public minimal health check — attempts reconnect if disconnected; no internal URI/credential exposure)
+router.get('/health', async (_req: Request, res: Response) => {
+  if (!isDbConnected()) {
+    await ensureDbConnected()
+  }
+  const connected = isDbConnected()
+  res.status(connected ? 200 : 503).json({
     status: 'online',
-    database: isDbConnected() ? 'connected' : 'disconnected',
+    database: connected ? 'connected' : 'disconnected',
     timestamp: new Date().toISOString()
   })
 })

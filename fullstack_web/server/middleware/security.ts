@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express'
-import { CorsOptions } from 'cors'
+import { CorsOptionsDelegate } from 'cors'
 import { ALLOWED_CORS_ORIGINS } from '../config'
 import { logServerEvent } from './logger'
 
@@ -61,29 +61,53 @@ export function nosqlSanitizer(req: Request, _res: Response, next: NextFunction)
   next()
 }
 
+function resolveRequestOrigin(req: Request): string {
+  const rawProto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim().toLowerCase()
+  const rawHost = String(req.headers['x-forwarded-host'] || req.headers['host'] || '').split(',')[0].trim().toLowerCase()
+  if (!rawHost) return ''
+  return `${rawProto}://${rawHost}`
+}
+
 /**
- * Locked-down CORS configuration.
- * - Allows configured web origins (`CORS_ORIGINS` + `APP_BASE_URL` + localhost in non-prod).
- * - Allows native mobile apps / webhooks / curl requests that send no `Origin` header.
+ * Locked-down CORS configuration with dynamic same-origin awareness.
+ * - Always allows requests with no `Origin` header (native mobile app, webhooks, curl).
+ * - Always allows same-origin browser requests (e.g., Vite `<script crossorigin>` or SPA `fetch('/api/...')` on Firebase App Hosting or custom domains).
+ * - Allows configured cross-origin web origins (`CORS_ORIGINS`, `APP_BASE_URL`, `FIREBASE_APP_HOSTING_URL`, default hosted app origin, localhost in non-prod).
  * - Blocks unauthorized third-party browser origins.
  */
-export function buildCorsOptions(): CorsOptions {
-  const allowedSet = new Set(ALLOWED_CORS_ORIGINS.map((o) => o.toLowerCase()))
+export function buildCorsOptions(): CorsOptionsDelegate<Request> {
+  const allowedSet = new Set(ALLOWED_CORS_ORIGINS.map((o) => o.replace(/\/+$/, '').toLowerCase()))
 
-  return {
-    origin: (origin, callback) => {
-      if (!origin) {
-        return callback(null, true)
-      }
-      const normalized = origin.replace(/\/+$/, '').toLowerCase()
-      if (allowedSet.has(normalized)) {
-        return callback(null, true)
-      }
-      logServerEvent('SECURITY', `Blocked CORS request from unauthorized origin: ${origin}`)
-      return callback(new Error('Origin not allowed by CORS policy.'))
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Kcb-Secret', 'X-Webhook-Secret', 'X-MobileSasa-Secret', 'X-MobileSasa-Signature']
+  return (req, callback) => {
+    const origin = req.headers.origin
+    const requestOrigin = resolveRequestOrigin(req)
+
+    const corsOptions = {
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'X-Kcb-Secret',
+        'X-Webhook-Secret',
+        'X-MobileSasa-Secret',
+        'X-MobileSasa-Signature'
+      ],
+      exposedHeaders: ['X-Total-Count']
+    }
+
+    if (!origin) {
+      return callback(null, { ...corsOptions, origin: true })
+    }
+
+    const normalized = origin.replace(/\/+$/, '').toLowerCase()
+    const isSameOrigin = Boolean(requestOrigin) && normalized === requestOrigin
+
+    if (isSameOrigin || allowedSet.has(normalized)) {
+      return callback(null, { ...corsOptions, origin: true })
+    }
+
+    logServerEvent('SECURITY', `Blocked CORS request from unauthorized origin: ${origin} (host origin: ${requestOrigin || 'unknown'})`)
+    return callback(new Error('Origin not allowed by CORS policy.'))
   }
 }

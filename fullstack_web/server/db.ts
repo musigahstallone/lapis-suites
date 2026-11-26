@@ -2,22 +2,77 @@ import dns from 'dns'
 import { MongoClient, Db } from 'mongodb'
 import bcrypt from 'bcryptjs'
 import {
+  IS_PRODUCTION,
   generateHexObjectId,
   MAX_ADMIN_ACCOUNTS,
   isAllowedAdminEmail
 } from './config'
 import { logServerEvent } from './middleware/logger'
 
-// Ensure reliable SRV DNS resolution on Windows environments
-try {
-  dns.setServers(['8.8.8.8', '1.1.1.1'])
-} catch {}
+// Only override DNS servers on Windows where local DNS stubs sometimes fail SRV lookups.
+// On Linux containers (Cloud Run / Firebase App Hosting), use the container's native DNS resolver.
+if (process.platform === 'win32') {
+  try {
+    dns.setServers(['8.8.8.8', '1.1.1.1'])
+  } catch {}
+}
 
-const MONGO_URI_AUTH = process.env.MONGODB_URI || 'mongodb://stallone:Stallone%40Mongo123@127.0.0.1:27017/propmanager?authSource=admin'
-const MONGO_URI_DIRECT = 'mongodb://127.0.0.1:27017/propmanager'
+const LOCAL_DEV_FALLBACK_URI = 'mongodb://127.0.0.1:27017/propmanager'
+const RETRY_COOLDOWN_MS = 5000
 
 let db: Db | null = null
 let mongoClient: MongoClient | null = null
+let connectInFlight: Promise<Db> | null = null
+let lastConnectAttemptAt = 0
+let lastDbError: string | null = null
+
+function stripWrappingQuotes(raw: string): string {
+  const trimmed = raw.trim()
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim()
+  }
+  return trimmed
+}
+
+function resolveMongoUri(): string {
+  const raw = process.env.MONGODB_URI || ''
+  return stripWrappingQuotes(raw)
+}
+
+function sanitizeMongoUriForLog(uri: string): string {
+  if (!uri) return '(not configured)'
+  try {
+    const parsed = new URL(uri)
+    const protocol = parsed.protocol.replace(/:$/, '')
+    const host = parsed.host || 'unknown-host'
+    const dbName = parsed.pathname && parsed.pathname !== '/' ? parsed.pathname : '/propmanager'
+    return `${protocol}://${host}${dbName}`
+  } catch {
+    return uri.replace(/\/\/[^@]+@/, '//***:***@')
+  }
+}
+
+function sanitizeDbErrorMessage(err: any): string {
+  const name = err?.name ? `${err.name}: ` : ''
+  const code = err?.code ? ` [code=${err.code}]` : ''
+  const rawMsg = String(err?.message || 'Unknown MongoDB connection error')
+  // Strip any credentials if a driver message ever echoed a URI
+  const safeMsg = rawMsg.replace(/mongodb(\+srv)?:\/\/[^@\s]+@/gi, 'mongodb$1://***:***@')
+  return `${name}${safeMsg}${code}`
+}
+
+function resolveDbNameFromUri(uri: string): string {
+  try {
+    const parsed = new URL(uri)
+    const pathDb = parsed.pathname.replace(/^\/+/, '').split('/')[0]
+    return pathDb || 'propmanager'
+  } catch {
+    return 'propmanager'
+  }
+}
 
 export function getDb(): Db {
   if (!db) {
@@ -28,6 +83,10 @@ export function getDb(): Db {
 
 export function isDbConnected(): boolean {
   return db !== null
+}
+
+export function getLastDbError(): string | null {
+  return lastDbError
 }
 
 async function ensureCollectionsAndIndexes(database: Db) {
@@ -197,28 +256,107 @@ async function ensureCollectionsAndIndexes(database: Db) {
 }
 
 export async function connectMongo(): Promise<Db> {
-  const isAtlas = MONGO_URI_AUTH.includes('mongodb+srv') || MONGO_URI_AUTH.includes('mongodb.net')
-  const hostLabel = isAtlas ? 'MongoDB Atlas Cloud' : '127.0.0.1:27017'
+  if (db) return db
+  if (connectInFlight) return connectInFlight
 
-  try {
-    mongoClient = new MongoClient(MONGO_URI_AUTH, { serverSelectionTimeoutMS: 8000 })
-    await mongoClient.connect()
-    db = mongoClient.db('propmanager')
-    logServerEvent('DB', `Connected successfully to ${hostLabel}`)
-    await ensureCollectionsAndIndexes(db)
-    return db
-  } catch (errAuth: any) {
-    logServerEvent('DB', `Primary connection failed (${errAuth.message}), attempting fallback connection...`)
+  connectInFlight = (async () => {
+    lastConnectAttemptAt = Date.now()
+    const configuredUri = resolveMongoUri()
+    const targetUri = configuredUri || (!IS_PRODUCTION ? LOCAL_DEV_FALLBACK_URI : '')
+
+    if (!targetUri) {
+      const msg = 'MONGODB_URI is not configured in production environment/secrets.'
+      lastDbError = msg
+      logServerEvent('DB', `CRITICAL: ${msg}`)
+      throw new Error(msg)
+    }
+
+    const safeTarget = sanitizeMongoUriForLog(targetUri)
+    const isSrv = targetUri.startsWith('mongodb+srv://')
+    const dbName = resolveDbNameFromUri(targetUri)
+    const clientOptions: any = {
+      serverSelectionTimeoutMS: 12000,
+      connectTimeoutMS: 12000,
+      socketTimeoutMS: 45000,
+      maxPoolSize: 10,
+      retryWrites: true
+    }
+    if (isSrv) {
+      clientOptions.tls = true
+    }
+
+    const client = new MongoClient(targetUri, clientOptions)
     try {
-      mongoClient = new MongoClient(MONGO_URI_DIRECT, { serverSelectionTimeoutMS: 3000 })
-      await mongoClient.connect()
-      db = mongoClient.db('propmanager')
-      logServerEvent('DB', 'Connected successfully to MongoDB at 127.0.0.1:27017 (direct fallback)')
+      logServerEvent('DB', `Connecting to MongoDB (${safeTarget})...`)
+      await client.connect()
+      const candidateDb = client.db(dbName)
+      await candidateDb.command({ ping: 1 })
+      mongoClient = client
+      db = candidateDb
+      lastDbError = null
+      logServerEvent('DB', `Connected successfully to MongoDB (${safeTarget})`)
       await ensureCollectionsAndIndexes(db)
       return db
-    } catch (errDirect: any) {
-      logServerEvent('DB', `CRITICAL: Could not connect to MongoDB: ${errDirect.message}`)
-      throw errDirect
+    } catch (errPrimary: any) {
+      try { await client.close() } catch {}
+      const safeErr = sanitizeDbErrorMessage(errPrimary)
+      lastDbError = safeErr
+      logServerEvent('DB', `MongoDB connection failed (${safeTarget}): ${safeErr}`)
+
+      // NEVER fall back to 127.0.0.1:27017 in production or when a remote MONGODB_URI was explicitly provided
+      const shouldFallbackLocal = !IS_PRODUCTION && !configuredUri
+      if (!shouldFallbackLocal) {
+        throw new Error(`MongoDB connection failed (${safeTarget}): ${safeErr}`)
+      }
+
+      const fallbackClient = new MongoClient(LOCAL_DEV_FALLBACK_URI, { serverSelectionTimeoutMS: 3000 })
+      try {
+        await fallbackClient.connect()
+        const fallbackDb = fallbackClient.db('propmanager')
+        await fallbackDb.command({ ping: 1 })
+        mongoClient = fallbackClient
+        db = fallbackDb
+        lastDbError = null
+        logServerEvent('DB', 'Connected successfully to local dev MongoDB at 127.0.0.1:27017')
+        await ensureCollectionsAndIndexes(db)
+        return db
+      } catch (errFallback: any) {
+        try { await fallbackClient.close() } catch {}
+        const safeFallbackErr = sanitizeDbErrorMessage(errFallback)
+        lastDbError = safeFallbackErr
+        logServerEvent('DB', `CRITICAL: Local dev MongoDB fallback failed: ${safeFallbackErr}`)
+        throw new Error(safeFallbackErr)
+      }
+    } finally {
+      connectInFlight = null
     }
+  })()
+
+  return connectInFlight
+}
+
+/**
+ * Self-healing lazy reconnect guard used by /api/health and requireDb.
+ * Prevents the server from staying permanently stuck on "Database service unavailable"
+ * after a transient startup/DNS/TLS error.
+ */
+export async function ensureDbConnected(): Promise<boolean> {
+  if (db) return true
+  if (connectInFlight) {
+    try {
+      await connectInFlight
+      return db !== null
+    } catch {
+      return false
+    }
+  }
+  if (Date.now() - lastConnectAttemptAt < RETRY_COOLDOWN_MS) {
+    return false
+  }
+  try {
+    await connectMongo()
+    return db !== null
+  } catch {
+    return false
   }
 }

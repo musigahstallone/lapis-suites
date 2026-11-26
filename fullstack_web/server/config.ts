@@ -74,15 +74,39 @@ export const MOBILESASA_CONFIG = {
   webhookSecret: (process.env.MOBILESASA_WEBHOOK_SECRET || '').trim()
 }
 
-// Allowed CORS Origins (comma-separated in CORS_ORIGINS env var + APP_BASE_URL + local dev origins)
+// Allowed CORS Origins (comma-separated in CORS_ORIGINS + APP_BASE_URL + Firebase App Hosting origins + local dev)
+const DEFAULT_HOSTED_ORIGINS = [
+  'https://lapis-suites--lapis-suites-gataka.us-east4.hosted.app'
+]
+
+function normalizeOrigin(raw: string): string {
+  const cleaned = raw.trim().replace(/^["']|["']$/g, '').replace(/\/+$/, '')
+  if (!cleaned) return ''
+  try {
+    return new URL(cleaned).origin
+  } catch {
+    return cleaned
+  }
+}
+
 function resolveAllowedOrigins(): string[] {
   const origins = new Set<string>()
   const fromEnv = (process.env.CORS_ORIGINS || '')
     .split(',')
-    .map((o) => o.trim().replace(/\/+$/, ''))
+    .map(normalizeOrigin)
     .filter(Boolean)
   for (const o of fromEnv) origins.add(o)
-  if (APP_BASE_URL) origins.add(APP_BASE_URL.replace(/\/+$/, ''))
+  if (APP_BASE_URL) {
+    const normBase = normalizeOrigin(APP_BASE_URL)
+    if (normBase) origins.add(normBase)
+  }
+  if (process.env.FIREBASE_APP_HOSTING_URL) {
+    const normHosted = normalizeOrigin(process.env.FIREBASE_APP_HOSTING_URL)
+    if (normHosted) origins.add(normHosted)
+  }
+  for (const hosted of DEFAULT_HOSTED_ORIGINS) {
+    origins.add(normalizeOrigin(hosted))
+  }
   if (!IS_PRODUCTION) {
     origins.add('http://localhost:5173')
     origins.add('http://127.0.0.1:5173')
