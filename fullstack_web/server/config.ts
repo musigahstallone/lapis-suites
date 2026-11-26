@@ -76,6 +76,7 @@ export const MOBILESASA_CONFIG = {
 
 // Allowed CORS Origins (comma-separated in CORS_ORIGINS + APP_BASE_URL + Firebase App Hosting origins + local dev)
 const DEFAULT_HOSTED_ORIGINS = [
+  'https://suites.qmusglobal.com',
   'https://lapis-suites--lapis-suites-gataka.us-east4.hosted.app'
 ]
 

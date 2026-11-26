@@ -89,7 +89,7 @@ class _LapisSuitesAppState extends State<LapisSuitesApp> with WidgetsBindingObse
 
   void _handleIncomingUri(Uri uri) {
     final path = uri.path.toLowerCase();
-    final isPayLink = path.startsWith('/pay') || uri.host.toLowerCase() == 'pay';
+    final isPayLink = path.startsWith('/pay') || path.startsWith('/p/') || uri.host.toLowerCase() == 'pay';
     if (!isPayLink) return;
 
     ApiService.pendingDeepLinkPay = true;

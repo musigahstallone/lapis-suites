@@ -31,7 +31,8 @@
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="https" android:host="rmsapi.qmusglobal.com" android:pathPrefix="/pay"/>
+                <data android:scheme="https" android:host="suites.qmusglobal.com" android:pathPrefix="/pay"/>
+                <data android:scheme="https" android:host="suites.qmusglobal.com" android:pathPrefix="/p"/>
             </intent-filter>
 
             <!-- Custom URL Scheme Deep Links (lapissuites://pay/<linkId>) -->

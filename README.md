@@ -67,7 +67,7 @@ npm install
 npm run server
 ```
 - API Base URL: `http://localhost:3001/api`
-- Production Cloudflare Tunnel: `https://rmsapi.qmusglobal.com/api`
+- Production Cloudflare Tunnel: `https://suites.qmusglobal.com/api`
 
 ### 3. Frontend Web Only
 ```powershell
@@ -89,7 +89,7 @@ flutter build apk
 ```
 - Pre-built APK Location:
   `D:\QMUS\Lapis_Suites\mobile_app\build\app\outputs\flutter-apk\app-release.apk`
-- Default Backend Target: `https://rmsapi.qmusglobal.com/api` (Configured with offline fallback detection & live STK polling).
+- Default Backend Target: `https://suites.qmusglobal.com/api` (Configured with offline fallback detection & live STK polling).
 
 ---
 

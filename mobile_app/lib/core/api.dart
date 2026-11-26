@@ -33,7 +33,7 @@ class ApiException implements Exception {
 }
 
 class ApiService {
-  static const String baseUrl = 'https://rmsapi.qmusglobal.com';
+  static const String baseUrl = 'https://suites.qmusglobal.com';
 
   static String? authToken;
   static Map<String, dynamic>? currentUser;

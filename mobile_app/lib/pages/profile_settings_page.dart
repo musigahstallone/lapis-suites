@@ -720,7 +720,7 @@ class SystemStatusPage extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _row('Server', 'rmsapi.qmusglobal.com'),
+              _row('Server', 'suites.qmusglobal.com'),
               const Divider(height: 18, color: C.borderLight),
               _row('Status', online ? 'Online' : 'Offline', color: online ? C.mintText : C.roseText),
               const Divider(height: 18, color: C.borderLight),
