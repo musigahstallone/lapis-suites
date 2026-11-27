@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, CreditCard, CheckCircle2, Smartphone, RefreshCw, AlertCircle, ShieldCheck } from 'lucide-vue-next'
 import {
   store,
@@ -18,7 +18,9 @@ import {
 import { onKcbCallback, onPaymentReceived } from '../../sse'
 import PhoneInput from '../../components/PhoneInput.vue'
 
+const route = useRoute()
 const router = useRouter()
+const selectedLeaseId = ref<string>(String(route.query.leaseId || ''))
 
 let unsubSseCallback: (() => void) | null = null
 let unsubSsePayment: (() => void) | null = null
@@ -75,13 +77,22 @@ const currentTenant = computed(() => {
   )
 })
 
+const myActiveLeases = computed(() => {
+  if (!currentTenant.value) return []
+  return store.leases.filter(
+    l => l.tenantId === currentTenant.value?.id && (l.status === 'active' || l.status === 'pending_deposit')
+  )
+})
+
 const activeLease = computed(() => {
   if (!currentTenant.value) return null
-  return (
-    store.leases.find(l => l.tenantId === currentTenant.value?.id && (l.status === 'active' || l.status === 'pending_deposit')) ||
-    store.leases.find(l => l.tenantId === currentTenant.value?.id) ||
-    null
-  )
+  if (myActiveLeases.value.length > 0) {
+    return (
+      myActiveLeases.value.find(l => l.id === selectedLeaseId.value) ||
+      myActiveLeases.value[0]
+    )
+  }
+  return store.leases.find(l => l.tenantId === currentTenant.value?.id) || null
 })
 
 const currentUnit = computed(() => {
@@ -103,7 +114,7 @@ const currentUnit = computed(() => {
 })
 
 const standing = computed(() => {
-  return getTenantFinancialStanding(currentTenant.value)
+  return getTenantFinancialStanding(currentTenant.value, activeLease.value)
 })
 
 const isDepositUnpaid = computed(() => {
@@ -120,16 +131,18 @@ const phoneNumber = ref(currentTenant.value?.phone || '')
 const reference = ref('')
 const notes = ref(isDepositUnpaid.value ? 'Security Deposit & Rent' : 'Monthly Rent Payment')
 
-// Update defaults when resident/unit loads
+// Update defaults when resident/unit loads or switches between units
 watch([currentTenant, currentUnit, activeLease], () => {
   if (currentTenant.value?.phone && !phoneNumber.value) {
     phoneNumber.value = currentTenant.value.phone
   }
-  if (amount.value === 0) {
-    amount.value = standing.value.balance > 0 ? standing.value.balance : (activeLease.value?.monthlyRent || currentUnit.value?.monthlyRent || 0)
-  }
-  if (isDepositUnpaid.value && (!notes.value || notes.value === 'Monthly Rent Payment')) {
+  amount.value = standing.value.balance > 0
+    ? standing.value.balance
+    : (activeLease.value?.monthlyRent || currentUnit.value?.monthlyRent || 0)
+  if (isDepositUnpaid.value) {
     notes.value = 'Security Deposit & Rent'
+  } else {
+    notes.value = 'Monthly Rent Payment'
   }
 })
 
@@ -171,6 +184,7 @@ async function handleKcbStkPush() {
       invoiceNumber: `LAPIS-${effectiveUnit}`,
       description: notes.value,
       tenantId: currentTenant.value.id,
+      leaseId: activeLease.value?.id,
       unitNumber: effectiveUnit
     })
 
@@ -285,6 +299,33 @@ function switchPaymentMode(mode: 'kcb_stk' | 'direct_portal') {
     </header>
 
     <div style="max-width: 540px;">
+      <!-- Conditional Multi-Unit Switcher (ONLY shown when resident holds 2+ active units) -->
+      <div v-if="myActiveLeases.length > 1" style="margin-bottom: 16px;">
+        <p style="font-size: 0.74rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin: 0 0 8px;">
+          Select Unit to Pay For
+        </p>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button
+            v-for="l in myActiveLeases"
+            :key="l.id"
+            type="button"
+            @click="selectedLeaseId = l.id"
+            :style="{
+              padding: '6px 14px',
+              borderRadius: '99px',
+              fontSize: '0.82rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              border: activeLease?.id === l.id ? '1px solid #111b35' : '1px solid #e2e8f0',
+              background: activeLease?.id === l.id ? '#111b35' : '#ffffff',
+              color: activeLease?.id === l.id ? '#ffffff' : '#475569'
+            }"
+          >
+            Unit {{ l.unitNumber }}
+          </button>
+        </div>
+      </div>
+
       <!-- Concise 1-Line Account Standing Banner -->
       <div v-if="standing.accountCredit > 0"
         style="padding: 12px 16px; background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; margin-bottom: 18px; display: flex; align-items: center; justify-content: space-between; gap: 12px;">

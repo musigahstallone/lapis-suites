@@ -557,6 +557,7 @@ void showStkPushSheet(
                             amount: amt,
                             unitNumber: unitNumber,
                             tenantId: tenantId,
+                            leaseId: leaseId,
                             description: notesCtrl.text.trim(),
                           );
 
@@ -1282,6 +1283,7 @@ void showAdminCollectPaymentSheet(
                                   amount: amt,
                                   unitNumber: targetUnitNumber,
                                   tenantId: selected.id,
+                                  leaseId: targetLeaseId,
                                 );
                                 if (!ctx.mounted) return;
                                 setMState(() => isLoading = false);

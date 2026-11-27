@@ -7,6 +7,7 @@ import {
   Building2,
   Users,
   FileText,
+  Download,
   AlertCircle,
   CheckCircle2,
   ArrowRightLeft,
@@ -27,6 +28,7 @@ import {
   fetchLeases
 } from '../data'
 import SearchableSelect from '../components/SearchableSelect.vue'
+import { downloadLeaseAgreementPdf } from '../utils/leaseAgreementGenerator'
 
 const route = useRoute()
 const router = useRouter()
@@ -436,6 +438,17 @@ async function handleTerminateLease() {
           </div>
 
           <div v-if="currentTenant" style="display: flex; flex-direction: column; gap: 8px; margin-top: 16px;">
+            <button
+              v-if="activeLease"
+              type="button"
+              class="primary-button"
+              style="justify-content: center;"
+              @click="downloadLeaseAgreementPdf(activeLease, currentTenant, unit)"
+            >
+              <Download :size="15" />
+              <span>Download Tenancy Agreement PDF</span>
+            </button>
+
             <router-link :to="`/tenants/${currentTenant.id}/lease-changes`" class="secondary-button" style="justify-content: center;">
               <ArrowRightLeft :size="15" />
               <span>Transfer Resident to Another Unit</span>

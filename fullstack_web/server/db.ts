@@ -186,13 +186,13 @@ async function ensureCollectionsAndIndexes(database: Db) {
         email: 'lapissuites@gmail.com',
         name: 'Lapis Suites Admin',
         initials: 'LS',
-        defaultPassword: 'Admin@Lapis2026!'
+        defaultPassword: 'Admin@Lapis123!'
       },
       {
-        email: 'alex.morgan@lapissuites.com',
-        name: 'Lapis Operations Admin',
-        initials: 'LO',
-        defaultPassword: 'Hello123@'
+        email: 'musigahstallone@gmail.com',
+        name: 'Stallone Musigah',
+        initials: 'SM',
+        defaultPassword: 'Admin@Lapis123!'
       }
     ]
 

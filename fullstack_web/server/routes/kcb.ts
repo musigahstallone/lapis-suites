@@ -70,13 +70,14 @@ export interface InitiateStkPushInput {
   callerRole?: string
   callerIp?: string
   tenantId?: string | null
+  leaseId?: string | null
   unitNumber?: string
   paymentLinkId?: string | null
 }
 
 export async function initiateKcbStkPushCore(input: InitiateStkPushInput) {
   const db = getDb()
-  const { phoneNumber, amount, invoiceNumber, description, callerName, callerEmail, callerRole, callerIp, tenantId, unitNumber, paymentLinkId } = input
+  const { phoneNumber, amount, invoiceNumber, description, callerName, callerEmail, callerRole, callerIp, tenantId, leaseId, unitNumber, paymentLinkId } = input
 
   if (!phoneNumber || !amount || Number(amount) <= 0) {
     throw Object.assign(new Error('A valid Kenyan phone number and positive amount are required.'), { status: 400 })
@@ -180,6 +181,7 @@ export async function initiateKcbStkPushCore(input: InitiateStkPushInput) {
     callerRole: callerRole || 'resident',
     callerIp: callerIp || '127.0.0.1',
     tenantId: tenantId || null,
+    leaseId: leaseId || null,
     unitNumber: unitNumber || '',
     paymentLinkId: paymentLinkId || null,
     createdAt: nowIso,
@@ -209,11 +211,36 @@ router.post(
   createRateLimiter(10, 60000), // Max 10 pushes per minute
   async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDb()
       const user = req.user!
-      const { phoneNumber, amount, invoiceNumber, description, callerName, callerEmail, tenantId, unitNumber, paymentLinkId } = req.body
+      const { phoneNumber, amount, invoiceNumber, description, callerName, callerEmail, tenantId, leaseId, unitNumber, paymentLinkId } = req.body
       const isLandlord = user.role === 'landlord'
       const scopedTenantId = isLandlord ? tenantId : (user.tenantId || user.userId)
-      const scopedUnitNumber = isLandlord ? unitNumber : (user.unitNumber || unitNumber)
+
+      // Strictly resolve the selected lease so multi-unit residents pay the exact unit they chose!
+      let scopedLeaseId: string | null = leaseId ? String(leaseId) : null
+      let scopedUnitNumber: string = unitNumber ? String(unitNumber).trim() : ''
+      if (!isLandlord && scopedTenantId) {
+        const myLeases = await db.collection('leases')
+          .find({ tenantId: String(scopedTenantId), status: { $in: ['active', 'pending_deposit'] } })
+          .sort({ startDate: 1, createdAt: 1 })
+          .toArray()
+        const matched =
+          (scopedLeaseId ? myLeases.find((l: any) => l.id === scopedLeaseId) : null) ||
+          (scopedUnitNumber ? myLeases.find((l: any) => l.unitNumber === scopedUnitNumber) : null) ||
+          myLeases[0] ||
+          null
+        if (matched) {
+          scopedLeaseId = matched.id
+          scopedUnitNumber = matched.unitNumber || scopedUnitNumber
+        } else {
+          scopedLeaseId = null
+          scopedUnitNumber = user.unitNumber || scopedUnitNumber
+        }
+      } else if (isLandlord && scopedLeaseId && !scopedUnitNumber) {
+        const lDoc = await db.collection('leases').findOne({ id: scopedLeaseId })
+        if (lDoc?.unitNumber) scopedUnitNumber = lDoc.unitNumber
+      }
 
       const result = await initiateKcbStkPushCore({
         phoneNumber,
@@ -225,6 +252,7 @@ router.post(
         callerRole: user.role,
         callerIp: getClientIp(req),
         tenantId: scopedTenantId,
+        leaseId: scopedLeaseId,
         unitNumber: scopedUnitNumber,
         paymentLinkId
       })
@@ -324,7 +352,7 @@ router.post(
   async (req: AuthRequest, res: Response) => {
     try {
       const db = getDb()
-      const { challengeToken, code, phoneNumber, amount, invoiceNumber, description, callerName, callerEmail, tenantId, unitNumber } = req.body
+      const { challengeToken, code, phoneNumber, amount, invoiceNumber, description, callerName, callerEmail, tenantId, leaseId, unitNumber } = req.body
 
       if (!challengeToken || !code) {
         return res.status(400).json({ error: 'Admin OTP confirmation is required before sending an STK Push.' })
@@ -375,6 +403,7 @@ router.post(
         callerRole: 'landlord_otp_verified',
         callerIp: getClientIp(req),
         tenantId,
+        leaseId: leaseId || null,
         unitNumber
       })
 
@@ -1107,36 +1136,52 @@ router.post(['/kcb/callback', '/kcb/webhook', '/kcb/callback/:secret', '/kcb/web
       }
     }
 
-    // Resolve tenant & unit
+    // Resolve tenant & target lease STRICTLY prioritizing kcbTx.leaseId -> kcbTx.unitNumber -> tenant's active leases
     const normalizedPhone = normalizeKenyanPhone(phoneNumber || kcbTx?.phoneNumber || '')
-    tenant = await db.collection('tenants').findOne({
-      $or: [
-        { phone: normalizedPhone },
-        { phone: `+${normalizedPhone}` },
-        { phone: `0${normalizedPhone.slice(3)}` }
-      ]
-    })
+    if (kcbTx?.leaseId) {
+      lease = await db.collection('leases').findOne({ id: kcbTx.leaseId })
+      if (lease?.tenantId) {
+        tenant = await db.collection('tenants').findOne({ id: lease.tenantId })
+      }
+    }
+    if (!lease && kcbTx?.unitNumber) {
+      lease = await db.collection('leases').findOne({
+        unitNumber: kcbTx.unitNumber,
+        status: { $in: ['active', 'pending_deposit'] }
+      })
+      if (lease?.tenantId && !tenant) {
+        tenant = await db.collection('tenants').findOne({ id: lease.tenantId })
+      }
+    }
     if (!tenant && kcbTx?.tenantId) {
       tenant = await db.collection('tenants').findOne({ id: kcbTx.tenantId })
     }
-    if (!tenant && kcbTx?.unitNumber) {
-      tenant = await db.collection('tenants').findOne({ currentUnitNumber: kcbTx.unitNumber })
+    if (!tenant && normalizedPhone) {
+      tenant = await db.collection('tenants').findOne({
+        $or: [
+          { phone: normalizedPhone },
+          { phone: `+${normalizedPhone}` },
+          { phone: `0${normalizedPhone.slice(3)}` }
+        ]
+      })
     }
-    if (!tenant) {
-      const l = await db.collection('leases').findOne({ unitNumber: kcbTx?.unitNumber })
-      if (l) {
-        tenant = await db.collection('tenants').findOne({ id: l.tenantId })
-      }
+    if (!lease && tenant) {
+      const activeLeases = await db.collection('leases')
+        .find({
+          tenantId: tenant.id,
+          status: { $in: ['active', 'pending_deposit'] }
+        })
+        .sort({ startDate: 1, createdAt: 1 })
+        .toArray()
+      lease =
+        (kcbTx?.unitNumber ? activeLeases.find((l: any) => l.unitNumber === kcbTx.unitNumber) : null) ||
+        activeLeases[0] ||
+        null
     }
 
-    lease = tenant ? await db.collection('leases').findOne({
-      tenantId: tenant.id,
-      status: { $in: ['active', 'pending_deposit'] }
-    }) : null
-
-    unitNumber = tenant?.currentUnitNumber || lease?.unitNumber || kcbTx?.unitNumber || '125F'
-    unitId = tenant?.currentUnitId || lease?.unitId || null
-    leaseId = tenant?.currentLeaseId || lease?.id || null
+    unitNumber = lease?.unitNumber || kcbTx?.unitNumber || tenant?.currentUnitNumber || ''
+    unitId = lease?.unitId || tenant?.currentUnitId || null
+    leaseId = lease?.id || kcbTx?.leaseId || tenant?.currentLeaseId || null
     tenantName = tenant?.name || kcbTx?.callerName || 'Resident'
     const ref = mpesaReceiptNumber || `KCB${Date.now().toString().slice(-6)}`
     const txDate = nowIso.slice(0, 10)
@@ -1216,11 +1261,14 @@ router.post(['/kcb/callback', '/kcb/webhook', '/kcb/callback/:secret', '/kcb/web
         if (callbackInsertedFresh) {
         logServerEvent('PAYMENT', `Ledger updated: Reconciled KES ${effectiveAmount.toLocaleString()} for Unit ${unitNumber} (${tenantName}) [Ref: ${normalizedRef}]`)
 
-        // Run full ledger & deposit reconciliation for this tenant
+        // Run full ledger & deposit reconciliation for this tenant scoped to this specific lease/unit
         let recSummary: any = null
         if (tenant?.id) {
           try {
-            const recResult = await runTenantLedgerReconciliation(tenant.id)
+            const recResult = await runTenantLedgerReconciliation(tenant.id, {
+              targetLeaseId: leaseId,
+              targetUnitNumber: unitNumber
+            })
             if (recResult.lease) updatedLease = recResult.lease
             recSummary = recResult.summary
           } catch (err: any) {

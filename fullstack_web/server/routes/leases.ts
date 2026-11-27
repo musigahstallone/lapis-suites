@@ -131,7 +131,7 @@ router.post('/leases', authenticateToken, requireRole(['landlord']), async (req:
       depositAmount: depNum,
       depositPaid: isDepositPaid,
       status: isDepositPaid ? 'active' : 'pending_deposit',
-      terms: terms || `Standard residential tenancy agreement for Unit ${unit.unitNumber}.`,
+      terms: terms || `Residential Tenancy Agreement for Unit ${unit.unitNumber} managed by LAPIS APARTMENTS LIMITED. Monthly rent due on Day ${configuredDueDay} strictly via M-Pesa Paybill 522533, Account 8107578. Refundable security deposit held subject to move-out inspection; minimum 1 calendar month written notice required prior to vacating; governed by the Laws of Kenya.`,
       nextPaymentDueDate: computeNextPaymentDueDate(startDate, configuredDueDay),
       createdAt: new Date().toISOString()
     }

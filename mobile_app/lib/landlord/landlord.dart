@@ -220,9 +220,12 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
               onDataChanged: () => _loadPortfolio(silent: true),
             )
           : _isLoading
-              ? const Center(child: CircularProgressIndicator(strokeWidth: 2.2, color: C.navy))
+              ? const DashboardSkeletonView()
               : _error != null
-                  ? ErrorStateCard(message: _error!, onRetry: () => _loadPortfolio())
+                  ? DashboardSkeletonView(
+                      showOfflineBanner: true,
+                      onRetry: () => _loadPortfolio(),
+                    )
                   : RefreshIndicator(
                       onRefresh: _loadPortfolio,
                       color: C.navy,

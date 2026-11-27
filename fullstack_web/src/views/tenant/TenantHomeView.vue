@@ -17,12 +17,16 @@ import {
 } from '../../data'
 import { downloadReceiptPdf } from '../../utils/receiptGenerator'
 import TransactionDetailsSheet from '../../components/TransactionDetailsSheet.vue'
+import LoadingSkeleton from '../../components/LoadingSkeleton.vue'
 import type { Transaction } from '../../types'
 
 const router = useRouter()
+const isLoading = ref(true)
 
 onMounted(async () => {
+  isLoading.value = true
   await fetchTenantProfile()
+  isLoading.value = false
 })
 
 // Transaction details side sheet
@@ -37,7 +41,7 @@ function openTransaction(tx: Transaction) {
 function downloadTxReceipt(tx: Transaction) {
   const tenant = resident.value
   const lease = activeLease.value
-  const st = getTenantFinancialStanding(tenant)
+  const st = getTenantFinancialStanding(tenant, lease)
   downloadReceiptPdf(tx, tenant, lease, st)
 }
 
@@ -88,7 +92,7 @@ const currentUnit = computed(() => {
 })
 
 const standing = computed(() => {
-  return getTenantFinancialStanding(resident.value)
+  return getTenantFinancialStanding(resident.value, activeLease.value)
 })
 
 const recentTransactions = computed(() => {
@@ -97,12 +101,20 @@ const recentTransactions = computed(() => {
     .filter(tx => {
       if (tx.tenantId !== resident.value?.id) return false
       if (myActiveLeases.value.length > 1 && activeLease.value) {
-        return !tx.leaseId || tx.leaseId === activeLease.value.id || tx.unitNumber === activeLease.value.unitNumber
+        if (tx.leaseId) return tx.leaseId === activeLease.value.id
+        return Boolean(tx.unitNumber && tx.unitNumber === activeLease.value.unitNumber)
       }
       return true
     })
     .slice(0, 4)
 })
+
+const payRoute = computed(() =>
+  activeLease.value ? { path: '/tenant/pay', query: { leaseId: activeLease.value.id } } : '/tenant/pay'
+)
+const paymentsRoute = computed(() =>
+  activeLease.value ? { path: '/tenant/payments', query: { leaseId: activeLease.value.id } } : '/tenant/payments'
+)
 
 const tenantMaintenanceCount = computed(() => {
   if (!resident.value) return 0
@@ -125,13 +137,16 @@ const tenantMaintenanceCount = computed(() => {
           <span>Maintenance</span>
           <span v-if="tenantMaintenanceCount > 0" class="nav-badge" style="background: #ea580c; color: white;">{{ tenantMaintenanceCount }}</span>
         </router-link>
-        <router-link to="/tenant/pay" class="primary-button">
+        <router-link :to="payRoute" class="primary-button">
           <CreditCard :size="15" />
           <span>Pay Rent</span>
         </router-link>
       </div>
     </header>
 
+    <LoadingSkeleton v-if="isLoading && !resident" variant="cards" :rows="3" />
+
+    <template v-else>
     <!-- Multi-Unit Switcher (ONLY displayed if this resident holds 2+ active units) -->
     <div v-if="myActiveLeases.length > 1" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;">
       <button
@@ -160,7 +175,7 @@ const tenantMaintenanceCount = computed(() => {
       <article class="stat-card" style="display: flex; flex-direction: column; justify-content: space-between;">
         <div>
           <div style="display: flex; align-items: center; justify-content: space-between;">
-            <span class="stat-label">Rent Status</span>
+            <span class="stat-label">Rent Status{{ activeLease ? ` · Unit ${activeLease.unitNumber}` : '' }}</span>
             <!-- Status Badge -->
             <span :class="['badge', standing.badgeClass]" style="font-size: 0.76rem;">
               {{ standing.badgeText }}
@@ -179,7 +194,7 @@ const tenantMaintenanceCount = computed(() => {
         </div>
 
         <div style="margin-top: 18px;">
-          <router-link to="/tenant/pay" class="primary-button" style="width: 100%;">
+          <router-link :to="payRoute" class="primary-button" style="width: 100%;">
             {{ standing.balance > 0 ? 'Pay Arrears Now' : 'Make Advance Payment' }} <ChevronRight :size="14" />
           </router-link>
         </div>
@@ -224,10 +239,10 @@ const tenantMaintenanceCount = computed(() => {
     <section class="structured-panel">
       <div class="panel-header-bar">
         <div class="panel-header-title">
-          <h2>Recent Payment History</h2>
+          <h2>Recent Payment History{{ activeLease && myActiveLeases.length > 1 ? ` — Unit ${activeLease.unitNumber}` : '' }}</h2>
           <p>Verified transactions for your tenancy at Lapis Suites. Click any row for details.</p>
         </div>
-        <router-link to="/tenant/payments" class="text-button" style="font-size: 0.82rem;">
+        <router-link :to="paymentsRoute" class="text-button" style="font-size: 0.82rem;">
           View all <ChevronRight :size="14" />
         </router-link>
       </div>
@@ -293,9 +308,10 @@ const tenantMaintenanceCount = computed(() => {
       </div>
 
       <div v-if="recentTransactions.length === 0" style="padding: 24px; text-align: center; color: #64748b;">
-        No payment records found.
+        No payment records found{{ activeLease ? ` for Unit ${activeLease.unitNumber}` : '' }}.
       </div>
     </section>
+    </template>
 
     <TransactionDetailsSheet
       :open="isDetailsOpen"

@@ -67,6 +67,11 @@ export interface Lease {
   terms: string
   phone?: string
   depositStatus?: string
+  leasePaid?: number
+  leaseBilled?: number
+  leaseBalance?: number
+  leaseCredit?: number
+  monthsBilled?: number
   transferNotes?: string
   transferredToUnitId?: string
   transferredToUnitNumber?: string

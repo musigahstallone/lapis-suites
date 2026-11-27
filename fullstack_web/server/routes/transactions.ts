@@ -144,31 +144,52 @@ router.post('/transactions', authenticateToken, async (req: AuthRequest, res: Re
     let tenant: any = null
     let lease: any = null
 
-    if (isLandlord && reqLeaseId) {
-      lease = await db.collection('leases').findOne({ id: String(reqLeaseId) })
-      if (lease) {
-        tenant = await db.collection('tenants').findOne({ id: lease.tenantId })
-      }
-    }
-    if (!tenant && effectiveTenantIdInput) {
+    if (effectiveTenantIdInput) {
       tenant = await db.collection('tenants').findOne({ id: String(effectiveTenantIdInput) })
-    }
-    if (!tenant && effectiveUnitInput) {
-      tenant = await db.collection('tenants').findOne({ currentUnitNumber: String(effectiveUnitInput).trim() })
     }
     if (!tenant && !isLandlord && user.email) {
       tenant = await db.collection('tenants').findOne({ email: user.email.toLowerCase() })
     }
-    if (tenant && !lease) {
-      lease = await db.collection('leases').findOne({
-        tenantId: tenant.id,
+
+    // Resolve lease strictly: landlord can pick any leaseId/unit; tenant can pick ANY of their OWN active leases (supports multi-unit residents!)
+    if (reqLeaseId) {
+      const candidateLease = await db.collection('leases').findOne({ id: String(reqLeaseId) })
+      if (candidateLease) {
+        if (isLandlord) {
+          lease = candidateLease
+          if (!tenant) tenant = await db.collection('tenants').findOne({ id: candidateLease.tenantId })
+        } else if (tenant && candidateLease.tenantId === tenant.id) {
+          lease = candidateLease
+        }
+      }
+    }
+    if (!lease && reqUnitNumber) {
+      const unitFilter: any = {
+        unitNumber: String(reqUnitNumber).trim(),
         status: { $in: ['active', 'pending_deposit'] }
-      }) || await db.collection('leases').findOne({ tenantId: tenant.id })
+      }
+      if (!isLandlord && tenant) unitFilter.tenantId = tenant.id
+      lease = await db.collection('leases').findOne(unitFilter)
+      if (lease && !tenant && isLandlord) {
+        tenant = await db.collection('tenants').findOne({ id: lease.tenantId })
+      }
+    }
+    if (!tenant && effectiveUnitInput) {
+      tenant = await db.collection('tenants').findOne({ currentUnitNumber: String(effectiveUnitInput).trim() })
+    }
+    if (tenant && !lease) {
+      lease = await db.collection('leases').findOne(
+        {
+          tenantId: tenant.id,
+          status: { $in: ['active', 'pending_deposit'] }
+        },
+        { sort: { startDate: 1, createdAt: 1 } }
+      ) || await db.collection('leases').findOne({ tenantId: tenant.id })
     }
 
-    const effectiveUnitNumber = (isLandlord ? reqUnitNumber : '') || tenant?.currentUnitNumber || lease?.unitNumber || user.unitNumber || ''
-    const effectiveUnitId = tenant?.currentUnitId || lease?.unitId || null
-    const effectiveLeaseId = (isLandlord ? reqLeaseId : null) || tenant?.currentLeaseId || lease?.id || null
+    const effectiveUnitNumber = lease?.unitNumber || (isLandlord ? reqUnitNumber : '') || tenant?.currentUnitNumber || user.unitNumber || ''
+    const effectiveUnitId = lease?.unitId || tenant?.currentUnitId || null
+    const effectiveLeaseId = lease?.id || (isLandlord ? reqLeaseId : null) || tenant?.currentLeaseId || null
 
     if (isLandlord && tenant && (!tenant.currentUnitNumber || !tenant.currentUnitId) && (effectiveUnitNumber || effectiveUnitId)) {
       await db.collection('tenants').updateOne(

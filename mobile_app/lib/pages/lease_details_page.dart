@@ -5,14 +5,17 @@ import '../core/api.dart';
 import '../core/icons.dart';
 import '../core/widgets.dart';
 import '../core/crud_sheets.dart';
+import '../core/lease_pdf.dart';
 
 class LeaseDetailsPage extends StatefulWidget {
   final LeaseModel lease;
+  final TenantModel? tenant;
   final List<UnitModel> vacantUnits;
 
   const LeaseDetailsPage({
     super.key,
     required this.lease,
+    this.tenant,
     this.vacantUnits = const [],
   });
 
@@ -22,6 +25,7 @@ class LeaseDetailsPage extends StatefulWidget {
 
 class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
   late LeaseModel _lease;
+  bool _generatingPdf = false;
 
   @override
   void initState() {
@@ -33,6 +37,22 @@ class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
     final fresh = await ApiService.fetchLeaseById(_lease.id);
     if (fresh != null && mounted) {
       setState(() => _lease = fresh);
+    }
+  }
+
+  Future<void> _downloadAgreementPdf() async {
+    if (_generatingPdf) return;
+    setState(() => _generatingPdf = true);
+    try {
+      await LeasePdfService.shareLeaseAgreement(_lease, tenant: widget.tenant);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not prepare agreement PDF: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _generatingPdf = false);
     }
   }
 
@@ -50,6 +70,13 @@ class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
   Widget build(BuildContext context) {
     final l = _lease;
     final isAdmin = ApiService.isLandlord;
+    final settings = ApiService.cachedSettings;
+    final paybill = settings.paybillNumber.isNotEmpty ? settings.paybillNumber : '522533';
+    final accountNo = settings.accountNumber.isNotEmpty ? settings.accountNumber : '8107578';
+    final recipient = settings.paybillRecipientName.isNotEmpty
+        ? settings.paybillRecipientName
+        : 'LAPIS APARTMENTS LIMITED';
+    final dueDay = settings.rentDueDay > 0 ? settings.rentDueDay : 5;
 
     return Scaffold(
       backgroundColor: C.canvas,
@@ -104,6 +131,7 @@ class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
                 const SizedBox(height: 12),
                 const Divider(height: 1, color: C.borderLight),
                 const SizedBox(height: 8),
+                _item('Landlord', recipient),
                 _item('Resident', l.tenantName),
                 _item('Unit', 'Unit ${l.unitNumber} · ${formatUnitTypeLabel(l.unitType)}'),
                 _item('Monthly Rent', 'KES ${l.monthlyRent.toLocaleString()}'),
@@ -117,25 +145,83 @@ class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
             ),
           ),
 
-          if (l.terms.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: C.surface,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: C.border.withValues(alpha: 0.75)),
+          const SizedBox(height: 12),
+
+          // Prominent Formal Tenancy Agreement PDF Download / Share Action
+          SizedBox(
+            height: 46,
+            child: ElevatedButton.icon(
+              onPressed: _generatingPdf ? null : _downloadAgreementPdf,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: C.navy,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Terms', style: flex(13, color: C.textPrimary)),
-                  const SizedBox(height: 6),
-                  Text(l.terms, style: sans(12, color: C.textSecondary, height: 1.45)),
-                ],
+              icon: _generatingPdf
+                  ? const SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const LapisIcon(LapisIconName.fileText, size: 16, color: Colors.white),
+              label: Text(
+                _generatingPdf ? 'Preparing Agreement PDF...' : 'Download / Share Tenancy Agreement PDF',
+                style: sans(12.5, color: Colors.white, weight: FontWeight.w600),
               ),
             ),
-          ],
+          ),
+
+          const SizedBox(height: 12),
+
+          // Formal Tenancy Clauses Summary
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: C.surface,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: C.border.withValues(alpha: 0.75)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Key Tenancy Clauses', style: flex(13.5, color: C.textPrimary)),
+                const SizedBox(height: 10),
+                _clause(
+                  '1. Rent & Official Payment Channel',
+                  'KES ${l.monthlyRent.toLocaleString()} payable in advance on or before Day $dueDay of each month strictly via M-Pesa Pay Bill $paybill, Account $accountNo ($recipient).',
+                ),
+                _clause(
+                  '2. Refundable Security Deposit',
+                  'KES ${l.depositAmount.toLocaleString()} (${l.isDepositSettled ? "Verified Paid" : "Pending"}) held against arrears or damages beyond fair wear and tear; refunded within 30 days after move-out inspection.',
+                ),
+                _clause(
+                  '3. Notice Period & Conduct',
+                  'Minimum 1 full calendar month written notice required prior to vacating. Strictly private residential occupation; no unauthorized subletting; quiet hours 10:00 PM – 6:00 AM.',
+                ),
+                _clause(
+                  '4. Governing Law',
+                  'Governed by the Laws of the Republic of Kenya. Download the full PDF above for all 8 clauses and formal execution signatures.',
+                ),
+                if (l.terms.isNotEmpty)
+                  _clause('Special Notes on File', l.terms),
+                const SizedBox(height: 6),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: C.amberBg,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: C.amberBorder),
+                  ),
+                  child: Text(
+                    'NB: To avoid fraud and losing money, DO NOT pay rent to any other account or to any personal numbers.',
+                    style: sans(11, color: C.amberText, weight: FontWeight.w600, height: 1.4),
+                  ),
+                ),
+              ],
+            ),
+          ),
 
           if (l.isActive && isAdmin) ...[
             const SizedBox(height: 16),
@@ -185,6 +271,20 @@ class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _clause(String title, String body) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: sans(12, color: C.textPrimary, weight: FontWeight.w700)),
+          const SizedBox(height: 2),
+          Text(body, style: sans(11.8, color: C.textSecondary, height: 1.45)),
         ],
       ),
     );

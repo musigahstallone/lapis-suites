@@ -170,12 +170,47 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
         .then((_) => _loadResidentScope(silent: true));
   }
 
+  /// Transactions strictly linked to the currently selected unit/lease
+  List<TransactionModel> get _txsForActiveLease {
+    final l = _lease;
+    if (l == null || _activeLeases.length <= 1) return _myTxs;
+    return _myTxs.where((tx) {
+      if (tx.leaseId != null && tx.leaseId!.isNotEmpty) {
+        return tx.leaseId == l.id;
+      }
+      return (tx.unitNumber ?? '').trim() == l.unitNumber.trim();
+    }).toList();
+  }
+
+  /// Exact balance due for the currently selected unit/lease (never mixes another unit's credit/arrears)
+  int get _activeLeaseDue {
+    final l = _lease;
+    if (l == null) return _tenant?.effectiveBalanceDue ?? 0;
+    if (l.leaseBalance != null) return l.leaseBalance! > 0 ? l.leaseBalance! : 0;
+    if (_activeLeases.length <= 1) return _tenant?.effectiveBalanceDue ?? 0;
+    final paid = _txsForActiveLease.where((tx) => tx.reconciled).fold<int>(0, (s, tx) => s + tx.amount);
+    final billed = l.leaseBilled ?? (l.depositAmount + l.monthlyRent);
+    final diff = billed - paid;
+    return diff > 0 ? diff : 0;
+  }
+
+  /// Exact advance credit for the currently selected unit/lease
+  int get _activeLeaseCredit {
+    final l = _lease;
+    if (l == null) return _tenant?.accountCredit ?? 0;
+    if (l.leaseCredit != null) return l.leaseCredit! > 0 ? l.leaseCredit! : 0;
+    if (_activeLeases.length <= 1) return _tenant?.accountCredit ?? 0;
+    final paid = _txsForActiveLease.where((tx) => tx.reconciled).fold<int>(0, (s, tx) => s + tx.amount);
+    final billed = l.leaseBilled ?? (l.depositAmount + l.monthlyRent);
+    final diff = paid - billed;
+    return diff > 0 ? diff : 0;
+  }
+
   void _openPayRentSheet() {
     final t = _tenant;
     final l = _lease;
-    final defaultAmt = (t != null && t.effectiveBalanceDue > 0)
-        ? t.effectiveBalanceDue
-        : (l?.monthlyRent ?? 0);
+    final unitDue = _activeLeaseDue;
+    final defaultAmt = unitDue > 0 ? unitDue : (l?.monthlyRent ?? 0);
 
     showStkPushSheet(
       context,
@@ -221,9 +256,9 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
 
   String _buildBalanceBreakdown() {
     final l = _lease;
-    final totalPaid = _myTxs
-        .where((tx) => tx.reconciled)
-        .fold<int>(0, (sum, tx) => sum + tx.amount);
+    final scopedTxs = _txsForActiveLease;
+    final totalPaid = l?.leasePaid ??
+        scopedTxs.where((tx) => tx.reconciled).fold<int>(0, (sum, tx) => sum + tx.amount);
 
     final parts = <String>[];
     if (l != null && l.monthlyRent > 0) {
@@ -281,9 +316,12 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
               onDataChanged: () => _loadResidentScope(silent: true),
             )
           : _isLoading
-              ? const Center(child: CircularProgressIndicator(strokeWidth: 2, color: C.navy))
+              ? const DashboardSkeletonView()
               : _error != null
-                  ? ErrorStateCard(message: _error!, onRetry: () => _loadResidentScope())
+                  ? DashboardSkeletonView(
+                      showOfflineBanner: true,
+                      onRetry: () => _loadResidentScope(),
+                    )
                   : RefreshIndicator(
                       onRefresh: _loadResidentScope,
                       color: C.navy,
@@ -314,12 +352,50 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
     }
   }
 
+  Widget _buildUnitSwitcherBar() {
+    final l = _lease;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: _activeLeases.map((leaseItem) {
+            final selected = leaseItem.id == l?.id;
+            return Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: GestureDetector(
+                onTap: () => setState(() => _selectedLeaseId = leaseItem.id),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: selected ? C.navy : C.surface,
+                    borderRadius: BorderRadius.circular(99),
+                    border: Border.all(color: selected ? C.navy : C.border),
+                  ),
+                  child: Text(
+                    'Unit ${leaseItem.unitNumber}',
+                    style: sans(
+                      12,
+                      color: selected ? Colors.white : C.textSecondary,
+                      weight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
   // --- TAB 0: FINTECH HOME OVERVIEW WITH SLIVER APP BAR ---
   Widget _buildHomeSliver() {
     final t = _tenant;
     final l = _lease;
-    final credit = t?.accountCredit ?? 0;
-    final due = t?.effectiveBalanceDue ?? 0;
+    final scopedTxs = _txsForActiveLease;
+    final due = _activeLeaseDue;
+    final credit = due > 0 ? 0 : _activeLeaseCredit;
     final hasCredit = credit > 0;
     final hasDue = due > 0;
 
@@ -328,10 +404,10 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
       fallback: 'Resident',
     );
 
-    final nextDue = (t?.nextPaymentDueDate.isNotEmpty == true)
-        ? formatShortDate(t!.nextPaymentDueDate)
-        : (l?.nextPaymentDueDate.isNotEmpty == true
-            ? formatShortDate(l!.nextPaymentDueDate)
+    final nextDue = (l?.nextPaymentDueDate.isNotEmpty == true)
+        ? formatShortDate(l!.nextPaymentDueDate)
+        : (t?.nextPaymentDueDate.isNotEmpty == true
+            ? formatShortDate(t!.nextPaymentDueDate)
             : 'Day ${ApiService.cachedSettings.rentDueDay}');
 
     final heroNumber = hasDue
@@ -378,40 +454,7 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
           sliver: SliverList(
             delegate: SliverChildListDelegate([
               // Conditional Multi-Unit Switcher (ONLY shown when resident holds 2+ active units)
-              if (_activeLeases.length > 1)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: _activeLeases.map((leaseItem) {
-                        final selected = leaseItem.id == l?.id;
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: GestureDetector(
-                            onTap: () => setState(() => _selectedLeaseId = leaseItem.id),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
-                              decoration: BoxDecoration(
-                                color: selected ? C.navy : C.surface,
-                                borderRadius: BorderRadius.circular(99),
-                                border: Border.all(color: selected ? C.navy : C.border),
-                              ),
-                              child: Text(
-                                'Unit ${leaseItem.unitNumber}',
-                                style: sans(
-                                  12,
-                                  color: selected ? Colors.white : C.textSecondary,
-                                  weight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                ),
+              if (_activeLeases.length > 1) _buildUnitSwitcherBar(),
 
               // 1. Clean White Fintech Hero Balance Card (color-coded balance text, no status pill badge)
               Container(
@@ -545,7 +588,9 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
               // 2. Compact Borderless Horizontal Unit Metadata Strip
               GestureDetector(
                 onTap: l != null
-                    ? () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => LeaseDetailsPage(lease: l)))
+                    ? () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => LeaseDetailsPage(lease: l, tenant: t)),
+                      )
                     : null,
                 behavior: HitTestBehavior.opaque,
                 child: Container(
@@ -591,14 +636,19 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
                 ),
               ),
 
-              // 3. Recent Payments
+              // 3. Recent Payments (strictly scoped to the selected unit/lease)
               Padding(
                 padding: const EdgeInsets.fromLTRB(18, 16, 18, 6),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('Recent Payments', style: flex(13.5, color: C.textPrimary)),
-                    if (_myTxs.isNotEmpty)
+                    Text(
+                      _activeLeases.length > 1 && l != null
+                          ? 'Recent Payments · Unit ${l.unitNumber}'
+                          : 'Recent Payments',
+                      style: flex(13.5, color: C.textPrimary),
+                    ),
+                    if (scopedTxs.isNotEmpty)
                       GestureDetector(
                         onTap: () => setState(() => _navIndex = 1),
                         child: Text(
@@ -610,7 +660,7 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
                 ),
               ),
 
-              if (_myTxs.isEmpty)
+              if (scopedTxs.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                   child: Container(
@@ -624,13 +674,16 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
                       children: [
                         const LapisIcon(LapisIconName.receipt, size: 22, color: C.textSoft),
                         const SizedBox(height: 8),
-                        Text('No payments yet', style: sans(12.5, color: C.textMuted)),
+                        Text(
+                          l != null ? 'No payments yet for Unit ${l.unitNumber}' : 'No payments yet',
+                          style: sans(12.5, color: C.textMuted),
+                        ),
                       ],
                     ),
                   ),
                 )
               else
-                ..._myTxs.take(4).map(_buildPaymentRow),
+                ...scopedTxs.take(4).map(_buildPaymentRow),
             ]),
           ),
         ),
@@ -679,8 +732,10 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
     );
   }
 
-  // --- TAB 1: PAYMENTS ---
+  // --- TAB 1: PAYMENTS (strictly scoped to selected unit/lease) ---
   Widget _buildPaymentsSliver() {
+    final l = _lease;
+    final scopedTxs = _txsForActiveLease;
     return CustomScrollView(
       controller: _payScrollCtrl,
       physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
@@ -691,7 +746,10 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
           surfaceTintColor: Colors.transparent,
           elevation: 0,
           titleSpacing: 16,
-          title: Text('Payments', style: flex(17, color: C.textPrimary)),
+          title: Text(
+            _activeLeases.length > 1 && l != null ? 'Payments · Unit ${l.unitNumber}' : 'Payments',
+            style: flex(17, color: C.textPrimary),
+          ),
           actions: [
             TextButton(
               onPressed: _openPayRentSheet,
@@ -704,23 +762,30 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
             child: Divider(height: 1, color: C.borderLight),
           ),
         ),
-        if (_myTxs.isEmpty)
+        if (_activeLeases.length > 1)
+          SliverToBoxAdapter(child: _buildUnitSwitcherBar()),
+        if (scopedTxs.isEmpty)
           SliverFillRemaining(
-            child: Center(child: Text('No payments yet.', style: sans(12.5, color: C.textMuted))),
+            child: Center(
+              child: Text(
+                l != null ? 'No payments yet for Unit ${l.unitNumber}.' : 'No payments yet.',
+                style: sans(12.5, color: C.textMuted),
+              ),
+            ),
           )
         else
           SliverPadding(
             padding: const EdgeInsets.symmetric(vertical: 8),
             sliver: SliverList.builder(
-              itemCount: _myTxs.length + (_hasMorePay ? 1 : 0),
+              itemCount: scopedTxs.length + (_hasMorePay ? 1 : 0),
               itemBuilder: (_, i) {
-                if (i == _myTxs.length) {
+                if (i == scopedTxs.length) {
                   return const Padding(
                     padding: EdgeInsets.all(14),
                     child: Center(child: CircularProgressIndicator(strokeWidth: 2, color: C.navy)),
                   );
                 }
-                return _buildPaymentRow(_myTxs[i]);
+                return _buildPaymentRow(scopedTxs[i]);
               },
             ),
           ),

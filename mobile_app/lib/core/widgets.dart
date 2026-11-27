@@ -981,3 +981,212 @@ extension NumberFormatting on int {
     return s.replaceAllMapped(regExp, (match) => ',');
   }
 }
+
+/// Smooth pulsing skeleton placeholder block for loading and offline states
+class LapisSkeletonBox extends StatefulWidget {
+  final double? width;
+  final double height;
+  final double radius;
+
+  const LapisSkeletonBox({
+    super.key,
+    this.width,
+    required this.height,
+    this.radius = 8,
+  });
+
+  @override
+  State<LapisSkeletonBox> createState() => _LapisSkeletonBoxState();
+}
+
+class _LapisSkeletonBoxState extends State<LapisSkeletonBox>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _opacity;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    )..repeat(reverse: true);
+    _opacity = Tween<double>(begin: 0.45, end: 0.95).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _opacity,
+      child: Container(
+        width: widget.width,
+        height: widget.height,
+        decoration: BoxDecoration(
+          color: C.border,
+          borderRadius: BorderRadius.circular(widget.radius),
+        ),
+      ),
+    );
+  }
+}
+
+/// Clean fintech dashboard skeleton shown while loading or when mobile data is off
+class DashboardSkeletonView extends StatelessWidget {
+  final bool showOfflineBanner;
+  final VoidCallback? onRetry;
+
+  const DashboardSkeletonView({
+    super.key,
+    this.showOfflineBanner = false,
+    this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+        children: [
+          // Top greeting header skeleton
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: const [
+                  LapisSkeletonBox(width: 150, height: 18, radius: 6),
+                  SizedBox(height: 6),
+                  LapisSkeletonBox(width: 96, height: 12, radius: 5),
+                ],
+              ),
+              const LapisSkeletonBox(width: 34, height: 34, radius: 99),
+            ],
+          ),
+
+          if (showOfflineBanner) ...[
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+              decoration: BoxDecoration(
+                color: C.surface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: C.amberBorder),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: const BoxDecoration(color: C.amberBg, shape: BoxShape.circle),
+                    child: const Center(
+                      child: LapisIcon(LapisIconName.wifiOff, size: 15, color: C.amberText),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Mobile data is off', style: flex(13, color: C.textPrimary, weight: FontWeight.w700)),
+                        const SizedBox(height: 1),
+                        Text('Turn on mobile data or Wi-Fi to load latest updates.', style: sans(11, color: C.textMuted)),
+                      ],
+                    ),
+                  ),
+                  if (onRetry != null)
+                    TextButton(
+                      onPressed: onRetry,
+                      child: Text('Retry', style: sans(12, color: C.navy, weight: FontWeight.w700)),
+                    ),
+                ],
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 16),
+          // Hero card skeleton
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: C.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: C.border.withValues(alpha: 0.7)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const LapisSkeletonBox(width: 110, height: 11, radius: 5),
+                const SizedBox(height: 12),
+                const LapisSkeletonBox(width: 180, height: 28, radius: 8),
+                const SizedBox(height: 10),
+                const LapisSkeletonBox(width: 140, height: 12, radius: 5),
+                const SizedBox(height: 18),
+                const LapisSkeletonBox(width: double.infinity, height: 42, radius: 10),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+          // Quick actions row skeleton
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: List.generate(
+              4,
+              (_) => Column(
+                children: const [
+                  LapisSkeletonBox(width: 40, height: 40, radius: 99),
+                  SizedBox(height: 6),
+                  LapisSkeletonBox(width: 48, height: 10, radius: 4),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 20),
+          const LapisSkeletonBox(width: 125, height: 14, radius: 5),
+          const SizedBox(height: 10),
+
+          // List tiles skeleton
+          ...List.generate(
+            4,
+            (_) => Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+              decoration: BoxDecoration(
+                color: C.surface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: C.border.withValues(alpha: 0.65)),
+              ),
+              child: Row(
+                children: [
+                  const LapisSkeletonBox(width: 36, height: 36, radius: 99),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: const [
+                        LapisSkeletonBox(width: 130, height: 13, radius: 5),
+                        SizedBox(height: 6),
+                        LapisSkeletonBox(width: 85, height: 10, radius: 4),
+                      ],
+                    ),
+                  ),
+                  const LapisSkeletonBox(width: 68, height: 14, radius: 5),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

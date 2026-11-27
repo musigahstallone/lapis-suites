@@ -1148,7 +1148,75 @@ export interface TenantFinancialStanding {
   nextDueDate: string
 }
 
-export function getTenantFinancialStanding(tenant: Tenant | null | undefined): TenantFinancialStanding {
+function computeLeaseStanding(lease: Lease, tenant: Tenant) {
+  let monthsBilled = Number(lease.monthsBilled || 0)
+  if (monthsBilled <= 0) {
+    monthsBilled = 1
+    if (lease.startDate) {
+      const startParts = lease.startDate.split('-').map(Number)
+      if (startParts.length === 3) {
+        const now = new Date()
+        const startDate = new Date(Date.UTC(startParts[0], startParts[1] - 1, startParts[2]))
+        const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+        if (todayUtc.getTime() < startDate.getTime()) {
+          monthsBilled = 0
+        } else {
+          const endParts = lease.endDate ? lease.endDate.split('-').map(Number) : []
+          const endDate = endParts.length === 3 ? new Date(Date.UTC(endParts[0], endParts[1] - 1, endParts[2])) : null
+          const effectiveEnd = endDate && todayUtc.getTime() > endDate.getTime() ? endDate : todayUtc
+          monthsBilled = Math.max(
+            1,
+            (effectiveEnd.getUTCFullYear() - startDate.getUTCFullYear()) * 12 +
+              (effectiveEnd.getUTCMonth() - startDate.getUTCMonth()) +
+              1
+          )
+        }
+      }
+    }
+  }
+
+  const unit = (lease.unitId ? store.units.find(u => u.id === lease.unitId) : null) ||
+               (lease.unitNumber ? store.units.find(u => u.unitNumber === lease.unitNumber) : null)
+  const monthlyRent = lease.monthlyRent > 0 ? lease.monthlyRent : (unit ? getUnitMonthlyRent(unit) : 0)
+  const depositAmount = lease.depositAmount !== undefined ? Number(lease.depositAmount) : monthlyRent
+
+  // Prefer server-reconciled lease fields (which include ledger adjustments) when present!
+  const hasServerReconciledLease =
+    typeof lease.leaseBalance === 'number' &&
+    typeof lease.leaseCredit === 'number' &&
+    (typeof lease.leaseBilled === 'number' || typeof lease.leasePaid === 'number' || lease.leaseBalance > 0 || lease.leaseCredit > 0)
+
+  // Strictly match ONLY transactions linked to THIS specific lease/unit (NEVER pull payments from another unit!)
+  const leaseTxs = store.transactions.filter(tx => {
+    const isVerified = tx.status === 'reconciled' || tx.reconciled === true || tx.status === 'completed' || tx.status === 'paid'
+    if (!isVerified) return false
+    if (tx.leaseId) return tx.leaseId === lease.id
+    if (tx.unitNumber && lease.unitNumber) return tx.unitNumber === lease.unitNumber && (!tx.tenantId || tx.tenantId === tenant.id)
+    // Only fall back to tenantId match if tenant has a SINGLE active lease
+    const activeCount = store.leases.filter(l => l.tenantId === tenant.id && (l.status === 'active' || l.status === 'pending_deposit')).length
+    return activeCount <= 1 && tx.tenantId === tenant.id
+  })
+
+  const txPaid = leaseTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
+  const totalBilled = typeof lease.leaseBilled === 'number' && lease.leaseBilled > 0
+    ? lease.leaseBilled
+    : depositAmount + (monthsBilled * monthlyRent)
+  const totalPaid = typeof lease.leasePaid === 'number' && lease.leasePaid >= txPaid
+    ? lease.leasePaid
+    : txPaid
+
+  const balance = hasServerReconciledLease ? Math.max(0, Number(lease.leaseBalance || 0)) : Math.max(0, totalBilled - totalPaid)
+  const accountCredit = hasServerReconciledLease ? Math.max(0, Number(lease.leaseCredit || 0)) : Math.max(0, totalPaid - totalBilled)
+  const baseStartDate = lease.startDate || tenant.moveInDate || new Date().toISOString().slice(0, 10)
+  const nextDueDate = lease.nextPaymentDueDate || calculateNextDueDate(baseStartDate, propertySettings.rentDueDay || 5, accountCredit, monthlyRent)
+
+  return { totalPaid, totalBilled, balance, accountCredit, monthlyRent, nextDueDate }
+}
+
+export function getTenantFinancialStanding(
+  tenant: Tenant | null | undefined,
+  targetLease?: Lease | null
+): TenantFinancialStanding {
   if (!tenant) {
     const defaultDueDate = calculateNextDueDate(new Date().toISOString().slice(0, 10), propertySettings.rentDueDay || 5)
     return {
@@ -1166,32 +1234,19 @@ export function getTenantFinancialStanding(tenant: Tenant | null | undefined): T
     }
   }
 
-  // 1. Find active lease or unit to determine real monthly obligation
-  const lease = store.leases.find(
-    l => (l.tenantId === tenant.id ||
-          (tenant.currentUnitId && l.unitId === tenant.currentUnitId) ||
-          (tenant.currentUnitNumber && l.unitNumber === tenant.currentUnitNumber) ||
-          (tenant.phone && l.phone && l.phone === tenant.phone) ||
-          (tenant.name && l.tenantName && l.tenantName.toLowerCase().includes(tenant.name.toLowerCase()))) &&
-          (l.status === 'active' || l.status === 'pending_deposit')
-  ) || store.leases.find(l => l.tenantId === tenant.id || (tenant.currentUnitNumber && l.unitNumber === tenant.currentUnitNumber))
+  const activeLeases = store.leases.filter(
+    l => l.tenantId === tenant.id && (l.status === 'active' || l.status === 'pending_deposit')
+  )
+  const resolvedLeases = targetLease
+    ? [targetLease]
+    : (activeLeases.length > 0
+        ? activeLeases
+        : store.leases.filter(l => l.tenantId === tenant.id).slice(0, 1))
 
-  const unit = (tenant.currentUnitId ? store.units.find(u => u.id === tenant.currentUnitId) : null) ||
-               (tenant.currentUnitNumber ? store.units.find(u => u.unitNumber === tenant.currentUnitNumber) : null) ||
-               (lease?.unitId ? store.units.find(u => u.id === lease.unitId) : null) ||
-               (lease?.unitNumber ? store.units.find(u => u.unitNumber === lease.unitNumber) : null)
-
-  let monthlyRent = 0
-  if (lease && lease.monthlyRent > 0) {
-    monthlyRent = lease.monthlyRent
-  } else if (unit) {
-    monthlyRent = getUnitMonthlyRent(unit)
-  }
-
-  // If resident has no active lease or assigned unit, they have zero contractual obligation
-  if (!lease && !unit) {
+  // If resident has no active lease, compute unassigned credit only from their own transactions
+  if (resolvedLeases.length === 0) {
     const tenantTxs = store.transactions.filter(tx => {
-      const isTargetTenant = tx.tenantId === tenant.id || (tenant.currentUnitNumber && tx.unitNumber === tenant.currentUnitNumber)
+      const isTargetTenant = tx.tenantId === tenant.id
       return isTargetTenant && (tx.status === 'reconciled' || tx.reconciled === true)
     })
     const totalPaid = tenantTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
@@ -1214,82 +1269,40 @@ export function getTenantFinancialStanding(tenant: Tenant | null | undefined): T
     }
   }
 
-  // Calculate elapsed billing months from lease start date to support full past year historical data
-  let monthsBilled = 1
-  if (lease && lease.startDate) {
-    const startParts = lease.startDate.split('-').map(Number)
-    if (startParts.length === 3) {
-      const now = new Date()
-      const startYear = startParts[0]
-      const startMonth = startParts[1] - 1
-      const nowYear = now.getFullYear()
-      const nowMonth = now.getMonth()
+  // Compute each lease strictly in isolation (payments for Unit A NEVER spill into Unit B!)
+  const perLease = resolvedLeases.map(l => computeLeaseStanding(l, tenant))
+  const totalPaid = perLease.reduce((s, r) => s + r.totalPaid, 0)
+  const totalBilled = perLease.reduce((s, r) => s + r.totalBilled, 0)
+  const balance = perLease.reduce((s, r) => s + r.balance, 0)
+  const rawCredit = perLease.reduce((s, r) => s + r.accountCredit, 0)
+  const accountCredit = balance > 0 ? 0 : rawCredit
+  const arrearsBalance = balance
+  const nextDueDate = perLease.map(r => r.nextDueDate).sort()[0] || tenant.nextPaymentDueDate || calculateNextDueDate(new Date().toISOString().slice(0, 10), propertySettings.rentDueDay || 5)
 
-      const monthDiff = (nowYear - startYear) * 12 + (nowMonth - startMonth)
-      monthsBilled = Math.max(1, monthDiff + 1)
-    }
-  }
-
-  const depositAmount = lease?.depositAmount !== undefined ? lease.depositAmount : (monthlyRent > 0 ? monthlyRent : 0)
-  // Contractual tenancy obligation ALWAYS includes the required security deposit
-  const totalBilled = depositAmount + (monthsBilled * monthlyRent)
-
-  // 2. Calculate total paid from verified transactions:
-  const tenantTxs = store.transactions.filter(tx => {
-    const isTargetTenant = tx.tenantId === tenant.id ||
-      (tenant.name && tx.tenantName && tx.tenantName.toLowerCase().includes(tenant.name.toLowerCase())) ||
-      (tenant.name && tx.payerName && tx.payerName.toLowerCase().includes(tenant.name.toLowerCase())) ||
-      (tenant.phone && tx.phoneNumber && tx.phoneNumber.includes(tenant.phone.slice(-9))) ||
-      (tenant.currentUnitNumber && tx.unitNumber === tenant.currentUnitNumber) ||
-      (lease && lease.unitNumber && tx.unitNumber === lease.unitNumber) ||
-      (lease && tx.leaseId === lease.id)
-    const isVerified = tx.status === 'reconciled' || tx.reconciled === true || tx.status === 'completed' || tx.status === 'paid'
-    return isTargetTenant && isVerified
-  })
-
-  const totalPaid = tenantTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
-  const diff = totalPaid - totalBilled
-
-  let balance = 0
-  let arrearsBalance = 0
-  let accountCredit = 0
   let status: 'credit' | 'arrears' | 'settled' = 'settled'
   let statusText = 'KES 0'
   let badgeText = '● All paid up'
   let badgeClass: 'paid' | 'overdue' | 'active' = 'paid'
-  let description = 'No balance due · All paid up for the current cycle.'
+  let description = targetLease
+    ? `Unit ${targetLease.unitNumber} is paid up for the current cycle.`
+    : 'No balance due · All paid up for the current cycle.'
 
-  if (diff > 0) {
-    accountCredit = diff
-    balance = 0
-    arrearsBalance = 0
-    status = 'credit'
-    statusText = `Credit of ${formatKES(accountCredit)}`
-    badgeText = `● Credit of ${formatKES(accountCredit)}`
-    badgeClass = 'active'
-  } else if (diff < 0) {
-    balance = Math.abs(diff)
-    arrearsBalance = Math.abs(diff)
-    accountCredit = 0
+  if (balance > 0) {
     status = 'arrears'
     statusText = `Arrear of ${formatKES(balance)}`
     badgeText = `● Arrear of ${formatKES(balance)}`
     badgeClass = 'overdue'
-    // description = `You have an arrear of ${formatKES(balance)} currently due for payment.`
-    description = `You have an arrear currently due for payment.`
-  }
-
-  // Calculate dynamic next payment due date based on whether advance credit covers future months
-  const baseStartDate = lease?.startDate || tenant.moveInDate || new Date().toISOString().slice(0, 10)
-  const nextDueDate = calculateNextDueDate(
-    baseStartDate,
-    propertySettings.rentDueDay || 5,
-    accountCredit,
-    monthlyRent
-  )
-
-  if (diff > 0) {
-    description = `You have an advance credit of ${formatKES(accountCredit)}. This prepaid balance automatically covers next month's rent on ${formatHumanDate(nextDueDate)} — you will not be charged again until your credit is exhausted.`
+    description = targetLease
+      ? `Unit ${targetLease.unitNumber} has a balance of ${formatKES(balance)} due.`
+      : 'You have an arrear currently due for payment.'
+  } else if (accountCredit > 0) {
+    status = 'credit'
+    statusText = `Credit of ${formatKES(accountCredit)}`
+    badgeText = `● Credit of ${formatKES(accountCredit)}`
+    badgeClass = 'active'
+    description = targetLease
+      ? `Unit ${targetLease.unitNumber} holds ${formatKES(accountCredit)} in advance credit · covered until ${formatHumanDate(nextDueDate)}.`
+      : `You have an advance credit of ${formatKES(accountCredit)}. Next due ${formatHumanDate(nextDueDate)}.`
   }
 
   return {
@@ -1310,19 +1323,19 @@ export function getTenantFinancialStanding(tenant: Tenant | null | undefined): T
 /**
  * Audit Backing for Security Deposits:
  * Strict Verification: A lease deposit is only verified as 'Paid' if a corresponding
- * audited transaction exists in the database ledger (store.transactions).
+ * audited transaction for THIS specific lease exists in the database ledger.
  */
 export function isDepositVerifiedPaid(lease: Lease | null | undefined): boolean {
   if (!lease) return false
   if (lease.depositPaid === true || lease.depositStatus === 'paid') return true
 
-  // Combined payment fulfillment: deposit and first month rent are paid together
   const totalPaid = store.transactions
-    .filter(
-      tx =>
-        (tx.leaseId === lease.id || tx.tenantId === lease.tenantId || (lease.unitNumber && tx.unitNumber === lease.unitNumber)) &&
-        (tx.status === 'reconciled' || tx.reconciled === true)
-    )
+    .filter(tx => {
+      const isVerified = tx.status === 'reconciled' || tx.reconciled === true
+      if (!isVerified) return false
+      if (tx.leaseId) return tx.leaseId === lease.id
+      return Boolean(lease.unitNumber && tx.unitNumber === lease.unitNumber)
+    })
     .reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0)
 
   return totalPaid >= (Number(lease.depositAmount) || 0)
@@ -1525,6 +1538,7 @@ export async function initiateKcbStkPush(payload: {
   invoiceNumber?: string
   description?: string
   tenantId?: string
+  leaseId?: string
   unitNumber?: string
 }) {
   const token = store.session.token

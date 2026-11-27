@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { CreditCard, Plus, ChevronRight, FileText } from 'lucide-vue-next'
 import {
   store,
@@ -13,10 +14,17 @@ import { downloadReceiptPdf } from '../../utils/receiptGenerator'
 import PaginationControl from '../../components/PaginationControl.vue'
 import TransactionDetailsSheet from '../../components/TransactionDetailsSheet.vue'
 import TenantStatementSheet from '../../components/TenantStatementSheet.vue'
+import LoadingSkeleton from '../../components/LoadingSkeleton.vue'
 import type { Transaction } from '../../types'
 
+const route = useRoute()
+const isLoading = ref(true)
+const selectedLeaseId = ref<string>(String(route.query.leaseId || ''))
+
 onMounted(async () => {
+  isLoading.value = true
   await fetchTenantProfile()
+  isLoading.value = false
 })
 
 const showStatementSheet = ref(false)
@@ -30,13 +38,22 @@ const resident = computed(() => {
   )
 })
 
+const myActiveLeases = computed(() => {
+  if (!resident.value) return []
+  return store.leases.filter(
+    l => l.tenantId === resident.value?.id && (l.status === 'active' || l.status === 'pending_deposit')
+  )
+})
+
 const activeLease = computed(() => {
   if (!resident.value) return null
-  return (
-    store.leases.find(l => l.tenantId === resident.value?.id && (l.status === 'active' || l.status === 'pending_deposit')) ||
-    store.leases.find(l => l.tenantId === resident.value?.id) ||
-    null
-  )
+  if (myActiveLeases.value.length > 0) {
+    return (
+      myActiveLeases.value.find(l => l.id === selectedLeaseId.value) ||
+      myActiveLeases.value[0]
+    )
+  }
+  return store.leases.find(l => l.tenantId === resident.value?.id) || null
 })
 
 const currentUnit = computed(() => {
@@ -58,13 +75,24 @@ const currentUnit = computed(() => {
 })
 
 const standing = computed(() => {
-  return getTenantFinancialStanding(resident.value)
+  return getTenantFinancialStanding(resident.value, activeLease.value)
 })
 
 const transactions = computed(() => {
   if (!resident.value) return []
-  return store.transactions.filter(tx => tx.tenantId === resident.value?.id)
+  return store.transactions.filter(tx => {
+    if (tx.tenantId !== resident.value?.id) return false
+    if (myActiveLeases.value.length > 1 && activeLease.value) {
+      if (tx.leaseId) return tx.leaseId === activeLease.value.id
+      return Boolean(tx.unitNumber && tx.unitNumber === activeLease.value.unitNumber)
+    }
+    return true
+  })
 })
+
+const payRoute = computed(() =>
+  activeLease.value ? { path: '/tenant/pay', query: { leaseId: activeLease.value.id } } : '/tenant/pay'
+)
 
 // Pagination
 const currentPage = ref(1)
@@ -87,7 +115,7 @@ function openTransaction(tx: Transaction) {
 function downloadTxReceipt(tx: Transaction) {
   const tenant = resident.value
   const lease = activeLease.value
-  const st = getTenantFinancialStanding(tenant)
+  const st = getTenantFinancialStanding(tenant, lease)
   downloadReceiptPdf(tx, tenant, lease, st)
 }
 </script>
@@ -106,20 +134,46 @@ function downloadTxReceipt(tx: Transaction) {
           <FileText :size="15" />
           <span>Statement</span>
         </button>
-        <router-link to="/tenant/pay" class="primary-button">
+        <router-link :to="payRoute" class="primary-button">
           <CreditCard :size="15" />
           <span>Make Payment</span>
         </router-link>
       </div>
     </header>
 
-    <!-- Financial Standing Summary Box (Dynamic) -->
+    <LoadingSkeleton v-if="isLoading && !resident" variant="list" :rows="4" />
+
+    <template v-else>
+    <!-- Conditional Multi-Unit Switcher (ONLY shown when resident holds 2+ active units) -->
+    <div v-if="myActiveLeases.length > 1" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;">
+      <button
+        v-for="l in myActiveLeases"
+        :key="l.id"
+        type="button"
+        @click="selectedLeaseId = l.id; currentPage = 1"
+        :style="{
+          padding: '6px 14px',
+          borderRadius: '99px',
+          fontSize: '0.82rem',
+          fontWeight: 600,
+          cursor: 'pointer',
+          border: activeLease?.id === l.id ? '1px solid #111b35' : '1px solid #e2e8f0',
+          background: activeLease?.id === l.id ? '#111b35' : '#ffffff',
+          color: activeLease?.id === l.id ? '#ffffff' : '#475569'
+        }"
+      >
+        Unit {{ l.unitNumber }}
+      </button>
+    </div>
+
+    <!-- Financial Standing Summary Box (Strictly Per-Unit / Per-Lease) -->
     <div class="panel"
       style="padding: 16px 20px; margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; flex-wrap: wrap; gap: 12px;">
       <div>
         <span
-          style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; font-weight: 600;">Current
-          Account Standing</span>
+          style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; font-weight: 600;">
+          Account Standing{{ activeLease ? ` · Unit ${activeLease.unitNumber}` : '' }}
+        </span>
         <div style="font-size: 1.25rem; font-weight: 700; color: #0f172a; margin-top: 3px;">
           {{ standing.statusText }}
         </div>
@@ -142,11 +196,11 @@ function downloadTxReceipt(tx: Transaction) {
     <section class="tx-feed-section">
       <div class="tx-feed-header-bar">
         <div class="tx-feed-header-info">
-          <h2>Payment Records ({{ transactions.length }})</h2>
+          <h2>Payment Records{{ activeLease ? ` · Unit ${activeLease.unitNumber}` : '' }} ({{ transactions.length }})</h2>
           <!-- <p>Chronological receipts matching your tenancy ledger. Click any card for full details.</p> -->
           <p>Click any card for full details.</p>
         </div>
-        <router-link to="/tenant/pay" class="tx-open-pay-btn">
+        <router-link :to="payRoute" class="tx-open-pay-btn">
           <CreditCard :size="15" />
           <span>Open Payment Link</span>
         </router-link>
@@ -198,12 +252,8 @@ function downloadTxReceipt(tx: Transaction) {
         <div class="tx-empty-icon-box">
           <FileText :size="24" />
         </div>
-        <h3>No payment records found</h3>
-        <p>Verified transactions for your tenancy ledger will be cataloged here chronologically.</p>
-        <!-- <router-link to="/tenant/pay" class="tx-open-pay-btn">
-          <CreditCard :size="15" />
-          <span>Open Payment Link</span>
-        </router-link> -->
+        <h3>No payment records found{{ activeLease ? ` for Unit ${activeLease.unitNumber}` : '' }}</h3>
+        <p>Verified transactions for this tenancy ledger will be cataloged here chronologically.</p>
       </div>
 
       <div style="margin-top: 16px;">
@@ -211,6 +261,7 @@ function downloadTxReceipt(tx: Transaction) {
           :total-items="transactions.length" />
       </div>
     </section>
+    </template>
 
     <!-- Full uncollapsed transaction details sheet -->
     <TransactionDetailsSheet :open="isDetailsOpen" :transaction="selectedTransaction" @close="isDetailsOpen = false" />

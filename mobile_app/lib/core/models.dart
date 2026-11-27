@@ -285,6 +285,11 @@ class LeaseModel {
   final String status;
   final String terms;
   final String nextPaymentDueDate;
+  final int? leasePaid;
+  final int? leaseBilled;
+  final int? leaseBalance;
+  final int? leaseCredit;
+  final int? monthsBilled;
 
   const LeaseModel({
     required this.id,
@@ -303,6 +308,11 @@ class LeaseModel {
     required this.status,
     required this.terms,
     required this.nextPaymentDueDate,
+    this.leasePaid,
+    this.leaseBilled,
+    this.leaseBalance,
+    this.leaseCredit,
+    this.monthsBilled,
   });
 
   bool get isActive =>
@@ -328,6 +338,11 @@ class LeaseModel {
       status: json['status']?.toString() ?? 'active',
       terms: json['terms']?.toString() ?? 'Standard residential tenancy agreement.',
       nextPaymentDueDate: json['nextPaymentDueDate']?.toString() ?? '',
+      leasePaid: (json['leasePaid'] as num?)?.toInt(),
+      leaseBilled: (json['leaseBilled'] as num?)?.toInt(),
+      leaseBalance: (json['leaseBalance'] as num?)?.toInt(),
+      leaseCredit: (json['leaseCredit'] as num?)?.toInt(),
+      monthsBilled: (json['monthsBilled'] as num?)?.toInt(),
     );
   }
 }
@@ -338,6 +353,7 @@ class TransactionModel {
   final String invoiceRef;
   final String? tenantId;
   final String? tenantName;
+  final String? leaseId;
   final String? unitNumber;
   final int amount;
   final String date;
@@ -357,6 +373,7 @@ class TransactionModel {
     required this.invoiceRef,
     this.tenantId,
     this.tenantName,
+    this.leaseId,
     this.unitNumber,
     required this.amount,
     required this.date,
@@ -390,6 +407,7 @@ class TransactionModel {
       invoiceRef: json['invoiceRef']?.toString() ?? '',
       tenantId: json['tenantId']?.toString(),
       tenantName: json['tenantName']?.toString() ?? json['payerName']?.toString(),
+      leaseId: json['leaseId']?.toString(),
       unitNumber: json['unitNumber']?.toString() ?? json['billRefNumber']?.toString(),
       amount: (json['amount'] as num?)?.toInt() ?? 0,
       date: json['date']?.toString() ?? '',
@@ -510,6 +528,7 @@ class PropertySettingsModel {
   final int lateFeePercent;
   final String contactPhone;
   final String contactEmail;
+  final String address;
 
   const PropertySettingsModel({
     this.propertyName = 'LAPIS SUITES',
@@ -521,6 +540,7 @@ class PropertySettingsModel {
     this.lateFeePercent = 5,
     this.contactPhone = '',
     this.contactEmail = '',
+    this.address = 'Nairobi, Kenya',
   });
 
   factory PropertySettingsModel.fromJson(Map<String, dynamic> json) {
@@ -534,6 +554,7 @@ class PropertySettingsModel {
       lateFeePercent: (json['lateFeePercent'] as num?)?.toInt() ?? 5,
       contactPhone: json['contactPhone']?.toString() ?? '',
       contactEmail: json['contactEmail']?.toString() ?? '',
+      address: json['address']?.toString() ?? 'Nairobi, Kenya',
     );
   }
 }

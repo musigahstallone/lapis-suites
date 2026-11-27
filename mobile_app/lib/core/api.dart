@@ -1637,12 +1637,13 @@ class ApiService {
     }
   }
 
-  /// Resident STK Push initiation
+  /// Resident STK Push initiation (strictly linked to selected leaseId & unitNumber)
   static Future<Map<String, dynamic>> initiateStkPush({
     required String phoneNumber,
     required int amount,
     String? unitNumber,
     String? tenantId,
+    String? leaseId,
     String? description,
   }) async {
     try {
@@ -1657,6 +1658,7 @@ class ApiService {
               'invoiceNumber': 'LAPIS-${unitNumber ?? "RENT"}',
               'unitNumber': unitNumber ?? '',
               'tenantId': tenantId,
+              if (leaseId != null && leaseId.isNotEmpty) 'leaseId': leaseId,
               'description': description ?? 'Rent Payment',
               'callerName': currentUser?['name'] ?? 'Resident',
               'callerEmail': currentUser?['email'] ?? 'resident@lapissuites.com',
@@ -1715,7 +1717,7 @@ class ApiService {
     }
   }
 
-  /// Admin STK Push Step 2: Verify Admin SMS OTP & send STK push to resident
+  /// Admin STK Push Step 2: Verify Admin SMS OTP & send STK push to resident (linked to leaseId)
   static Future<Map<String, dynamic>> verifyAndSendAdminStk({
     required String challengeToken,
     required String code,
@@ -1723,6 +1725,7 @@ class ApiService {
     required int amount,
     String? unitNumber,
     String? tenantId,
+    String? leaseId,
     String? description,
   }) async {
     try {
@@ -1739,6 +1742,7 @@ class ApiService {
               'invoiceNumber': 'LAPIS-${unitNumber ?? "RENT"}',
               'unitNumber': unitNumber ?? '',
               'tenantId': tenantId,
+              if (leaseId != null && leaseId.isNotEmpty) 'leaseId': leaseId,
               'description': description ?? 'Rent Payment',
             }),
           )

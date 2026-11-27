@@ -445,6 +445,8 @@ export async function runTenantLedgerReconciliation(
             depositPaid,
             depositStatus,
             status: leaseStatus,
+            leasePaid,
+            leaseBilled,
             leaseBalance,
             leaseCredit,
             monthsBilled,

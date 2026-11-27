@@ -25,6 +25,7 @@ import {
   fetchDashboard
 } from '../data'
 import TransactionDetailsSheet from '../components/TransactionDetailsSheet.vue'
+import LoadingSkeleton from '../components/LoadingSkeleton.vue'
 import type { Transaction } from '../types'
 
 const emit = defineEmits<{
@@ -130,8 +131,11 @@ const collectionRate = computed(() => {
       </router-link>
     </div>
 
+    <!-- Loading Skeleton while initial portfolio data loads -->
+    <LoadingSkeleton v-if="isLoading && store.units.length === 0 && store.tenants.length === 0" variant="dashboard" :rows="4" />
+
     <!-- KPI Metric Cards (Strict 60-30-10 Palette: Calm White Cards, Uniform Neutral Slate Badges, High-Contrast Figures) -->
-    <section class="stats-grid">
+    <section v-else class="stats-grid">
       <!-- 1. Occupancy Rate -->
       <article class="stat-card">
         <div class="stat-header">
