@@ -574,7 +574,7 @@ router.get('/tenants/:id/adjustments', authenticateToken, async (req: AuthReques
   }
 })
 
-// POST /api/tenants/:id/adjustments (Landlord only — extra charge like water/garbage/damage OR credit note/waiver)
+// POST /api/tenants/:id/adjustments (Landlord only — strictly RENT / DEPOSIT adjustments or rent waivers/credits; no water/utility billing)
 router.post('/tenants/:id/adjustments', authenticateToken, requireRole(['landlord']), async (req: AuthRequest, res: Response) => {
   try {
     const db = getDb()
@@ -594,7 +594,11 @@ router.post('/tenants/:id/adjustments', authenticateToken, requireRole(['landlor
     if (!cleanReason) {
       return res.status(400).json({ error: 'A clear reason is required for every ledger adjustment.' })
     }
-    const cleanCategory = cleanString(category || (type === 'charge' ? 'utility' : 'waiver'), 60)
+    const rawCat = String(category || '').trim().toLowerCase()
+    if (['water', 'electricity', 'utility', 'utilities', 'garbage'].includes(rawCat)) {
+      return res.status(400).json({ error: 'Landlord collects rent and security deposit only. Water and utility bills are not billed on the rent ledger.' })
+    }
+    const cleanCategory = cleanString(category || (type === 'charge' ? 'rent_adjustment' : 'waiver'), 60)
 
     let resolvedLeaseId = leaseId ? String(leaseId) : (tenant.currentLeaseId || null)
     let resolvedUnitNumber = unitNumber ? String(unitNumber) : (tenant.currentUnitNumber || '')

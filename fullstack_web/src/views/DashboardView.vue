@@ -86,9 +86,9 @@ const expiringLeases = computed(() => {
 })
 
 const collectionRate = computed(() => {
-  const target = stats.monthlyRecurringRevenue
+  const target = stats.value.totalExpectedThisMonth || stats.value.monthlyRecurringRevenue
   if (!target || target <= 0) return 0
-  const rate = Math.round((stats.currentMonthCollections / target) * 100)
+  const rate = Math.round((stats.value.currentMonthCollections / target) * 100)
   return Math.min(rate, 100)
 })
 </script>
@@ -99,7 +99,7 @@ const collectionRate = computed(() => {
       <div>
         <p class="eyebrow">PORTFOLIO OVERVIEW</p>
         <h1>Dashboard</h1>
-        <p>Real-time occupancy rates, monthly recurring revenue, and collections.</p>
+        <p>Monthly expected rent &amp; deposits, collections received this month, and prior months' arrears.</p>
       </div>
 
       <div class="intro-actions">
@@ -136,7 +136,53 @@ const collectionRate = computed(() => {
 
     <!-- KPI Metric Cards (Strict 60-30-10 Palette: Calm White Cards, Uniform Neutral Slate Badges, High-Contrast Figures) -->
     <section v-else class="stats-grid">
-      <!-- 1. Occupancy Rate -->
+      <!-- 1. Received This Month -->
+      <article class="stat-card">
+        <div class="stat-header">
+          <span class="stat-label">Received This Month</span>
+          <div class="stat-icon" :class="{ 'stat-icon-emerald': stats.currentMonthCollections > 0 }">
+            <TrendingUp :size="15" />
+          </div>
+        </div>
+        <div class="stat-value" :class="{ 'val-emerald': stats.currentMonthCollections > 0 }">
+          {{ formatKES(stats.currentMonthCollections) }}
+        </div>
+        <div class="stat-sub">
+          <span>{{ collectionRate }}% of this month's expected</span>
+        </div>
+      </article>
+
+      <!-- 2. Expected This Month (Rent + Deposits) -->
+      <article class="stat-card">
+        <div class="stat-header">
+          <span class="stat-label">Expected This Month</span>
+          <div class="stat-icon">
+            <CircleDollarSign :size="15" />
+          </div>
+        </div>
+        <div class="stat-value">{{ formatKES(stats.totalExpectedThisMonth) }}</div>
+        <div class="stat-sub">
+          <span>Rent {{ formatKES(stats.monthlyRecurringRevenue) }} · Deposits {{ formatKES(stats.depositsExpectedThisMonth) }}</span>
+        </div>
+      </article>
+
+      <!-- 3. Prior Months' Arrears -->
+      <article class="stat-card">
+        <div class="stat-header">
+          <span class="stat-label">Prior Months' Arrears</span>
+          <div class="stat-icon" :class="{ 'stat-icon-amber': stats.priorMonthsArrears > 0 }">
+            <AlertTriangle :size="15" />
+          </div>
+        </div>
+        <div class="stat-value" :class="{ 'val-amber': stats.priorMonthsArrears > 0 }">
+          {{ formatKES(stats.priorMonthsArrears) }}
+        </div>
+        <div class="stat-sub">
+          <span>Total due incl. current: {{ formatKES(stats.pendingCollections) }} ({{ tenantsWithBalances.length }})</span>
+        </div>
+      </article>
+
+      <!-- 4. Occupancy Rate -->
       <article class="stat-card">
         <div class="stat-header">
           <span class="stat-label">Occupancy Rate</span>
@@ -149,52 +195,6 @@ const collectionRate = computed(() => {
           <span>{{ stats.occupiedUnits }} of {{ stats.totalUnits }} units occupied</span>
         </div>
       </article>
-
-      <!-- 2. Monthly Recurring Revenue -->
-      <article class="stat-card">
-        <div class="stat-header">
-          <span class="stat-label">Monthly Recurring Revenue</span>
-          <div class="stat-icon">
-            <CircleDollarSign :size="15" />
-          </div>
-        </div>
-        <div class="stat-value">{{ formatKES(stats.monthlyRecurringRevenue) }}</div>
-        <div class="stat-sub">
-          <span>{{ formatKES(stats.totalPotentialRevenue) }} potential</span>
-        </div>
-      </article>
-
-      <!-- 3. Pending Collections -->
-      <article class="stat-card">
-        <div class="stat-header">
-          <span class="stat-label">Pending Collections</span>
-          <div class="stat-icon" :class="{ 'stat-icon-amber': stats.pendingCollections > 0 }">
-            <AlertTriangle :size="15" />
-          </div>
-        </div>
-        <div class="stat-value" :class="{ 'val-amber': stats.pendingCollections > 0 }">
-          {{ formatKES(stats.pendingCollections) }}
-        </div>
-        <div class="stat-sub">
-          <span>{{ tenantsWithBalances.length }} resident(s) pending</span>
-        </div>
-      </article>
-
-      <!-- 4. Month Collections -->
-      <article class="stat-card">
-        <div class="stat-header">
-          <span class="stat-label">Month Collections</span>
-          <div class="stat-icon" :class="{ 'stat-icon-emerald': stats.currentMonthCollections > 0 }">
-            <TrendingUp :size="15" />
-          </div>
-        </div>
-        <div class="stat-value" :class="{ 'val-emerald': stats.currentMonthCollections > 0 }">
-          {{ formatKES(stats.currentMonthCollections) }}
-        </div>
-        <div class="stat-sub">
-          <span>Reconciled this month</span>
-        </div>
-      </article>
     </section>
 
     <!-- Operational Insights: Cash Flow Momentum & Lease Expiry Watchlist -->
@@ -204,7 +204,7 @@ const collectionRate = computed(() => {
         <div class="insight-header">
           <div class="insight-title-group">
             <Activity :size="15" style="color: #64748b;" />
-            <h3>Cash Flow Momentum</h3>
+            <h3>Monthly Collection Progress</h3>
           </div>
           <span class="unit-type-pill" style="font-weight: 700;">{{ collectionRate }}% Realized</span>
         </div>
@@ -213,8 +213,8 @@ const collectionRate = computed(() => {
             <div class="progress-bar-unified" :style="{ width: `${collectionRate}%` }"></div>
           </div>
           <div class="meter-labels">
-            <span>Collected: <strong style="color: #0f172a;">{{ formatKES(stats.currentMonthCollections) }}</strong></span>
-            <span>Target MRR: <strong style="color: #0f172a;">{{ formatKES(stats.monthlyRecurringRevenue) }}</strong></span>
+            <span>Received: <strong style="color: #0f172a;">{{ formatKES(stats.currentMonthCollections) }}</strong></span>
+            <span>Expected (Rent + Deposits): <strong style="color: #0f172a;">{{ formatKES(stats.totalExpectedThisMonth) }}</strong></span>
           </div>
         </div>
         <p style="margin: 10px 0 0 0; font-size: 0.76rem; color: #64748b;">

@@ -358,7 +358,12 @@ class LeasePdfService {
                       pw.Row(
                         children: [
                           scheduleCell('Commencement Date', formatShortDate(lease.startDate)),
-                          scheduleCell('Expiry Date', formatShortDate(lease.endDate)),
+                          scheduleCell(
+                            'Expiry Date',
+                            lease.endDate.trim().isNotEmpty
+                                ? formatShortDate(lease.endDate)
+                                : 'Open-ended (Month-to-Month)',
+                          ),
                         ],
                       ),
                       pw.SizedBox(height: 8),
@@ -424,22 +429,24 @@ class LeasePdfService {
           clauseBlock(
             '2',
             'TERM & RENEWAL',
-            'This Tenancy commences on ${formatShortDate(lease.startDate)} and expires on ${formatShortDate(lease.endDate)}, unless earlier terminated under Clause 7. Any holding over with the Landlord\'s consent shall renew month-to-month on the same terms, subject to at least thirty (30) days written notice for any rent review.',
+            lease.endDate.trim().isNotEmpty
+                ? 'This Tenancy commences on ${formatShortDate(lease.startDate)} and expires on ${formatShortDate(lease.endDate)}, unless earlier terminated under Clause 7. Any holding over with the Landlord\'s consent shall renew month-to-month on the same terms, subject to at least thirty (30) days written notice for any rent review.'
+                : 'This Tenancy commences on ${formatShortDate(lease.startDate)} on an ongoing month-to-month basis until terminated by either party under Clause 7, subject to at least thirty (30) days written notice for any rent review.',
           ),
           clauseBlock(
             '3',
-            'RENT & PAYMENT TERMS',
-            'The agreed monthly rent is KES ${lease.monthlyRent.toLocaleString()}, payable strictly in advance on or before Day $rentDueDay of each calendar month exclusively via M-Pesa Pay Bill $paybill, Account Number $accountNo ($landlordCompany), or via verified STK Push in the $propertyName App. Payments are reconciled strictly to Lease ${lease.leaseNumber} (Unit ${lease.unitNumber}).',
+            'RENT & PAYMENT TERMS (RENT ONLY)',
+            'The agreed monthly rent is KES ${lease.monthlyRent.toLocaleString()}, payable strictly in advance on or before Day $rentDueDay of each calendar month. The Landlord collects monthly rent and refundable security deposit only. Payments MUST be made exclusively via M-Pesa Pay Bill $paybill, Account Number $accountNo ($landlordCompany), or via verified STK Push in the $propertyName App, and are reconciled strictly to Lease ${lease.leaseNumber} (Unit ${lease.unitNumber}).',
           ),
           clauseBlock(
             '4',
             'SECURITY DEPOSIT',
-            'The Tenant shall maintain a refundable Security Deposit of KES ${lease.depositAmount.toLocaleString()} ($depositStatus) held against unpaid rent, utility arrears, lost keys/access cards, or damage beyond fair wear and tear. The deposit may NOT be offset against the final month\'s rent without written consent. The balance is refunded within thirty (30) days after vacant possession and joint move-out inspection.',
+            'The Tenant shall maintain a refundable Security Deposit of KES ${lease.depositAmount.toLocaleString()} ($depositStatus) held against unpaid rent, lost keys/access cards, or damage beyond fair wear and tear. The deposit may NOT be offset against the final month\'s rent without written consent. The balance is refunded within thirty (30) days after vacant possession and joint move-out inspection.',
           ),
           clauseBlock(
             '5',
             'UTILITIES, REPAIRS & MAINTENANCE',
-            'The Tenant shall punctually settle all separately metered utilities (electricity, water, internet) and keep the interior clean and tenantable. The Landlord shall maintain the building structure and common areas. Any defect shall be reported promptly through the $propertyName Resident Portal.',
+            'Water, electricity, and internet/TV services are NOT collected by the Landlord and are settled directly by the Tenant with the respective utility providers. The Tenant shall keep the interior clean and tenantable. The Landlord shall maintain the building structure and common areas. Any defect shall be reported promptly through the $propertyName Resident Portal.',
           ),
           clauseBlock(
             '6',

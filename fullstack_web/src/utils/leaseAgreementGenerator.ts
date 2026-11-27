@@ -165,8 +165,12 @@ export function generateLeaseAgreementPdf(
     doc.text(val2, 145, rowY)
   }
 
+  const endLabel = lease.endDate && String(lease.endDate).trim()
+    ? formatHumanDate(lease.endDate)
+    : 'Open-ended (Month-to-Month)'
+
   drawScheduleRow('Demised Unit:', `Unit ${unitNo} (${unitTypeLabel})`, 'Agreement No:', lease.leaseNumber, y + 6.5)
-  drawScheduleRow('Lease Start:', formatHumanDate(lease.startDate), 'Lease End:', formatHumanDate(lease.endDate), y + 14.5)
+  drawScheduleRow('Lease Start:', formatHumanDate(lease.startDate), 'Lease End:', endLabel, y + 14.5)
   drawScheduleRow('Monthly Rent:', `${formatKES(lease.monthlyRent)} / month`, 'Rent Due Day:', `Day ${rentDueDay} of each month`, y + 22.5)
   y += 29
 
@@ -229,25 +233,27 @@ export function generateLeaseAgreementPdf(
   addClause(
     '2',
     'TERM & RENEWAL',
-    `This Tenancy shall commence on ${formatHumanDate(lease.startDate)} and continue for a fixed term expiring on ${formatHumanDate(lease.endDate)}, unless terminated earlier in accordance with Clause 7. Upon expiry of the fixed term, if the Tenant remains in occupation with the consent of the Landlord, the tenancy shall renew on a month-to-month basis under the same terms subject to any written rent review notice served at least thirty (30) days in advance.`
+    lease.endDate && String(lease.endDate).trim()
+      ? `This Tenancy shall commence on ${formatHumanDate(lease.startDate)} and continue for a fixed term expiring on ${formatHumanDate(lease.endDate)}, unless terminated earlier in accordance with Clause 7. Upon expiry of the fixed term, if the Tenant remains in occupation with the consent of the Landlord, the tenancy shall renew on a month-to-month basis under the same terms subject to any written rent review notice served at least thirty (30) days in advance.`
+      : `This Tenancy shall commence on ${formatHumanDate(lease.startDate)} on an ongoing month-to-month basis until terminated by either party in accordance with Clause 7, subject to at least thirty (30) days written notice for any rent review.`
   )
 
   addClause(
     '3',
-    'RENT & PAYMENT TERMS',
-    `The agreed monthly rent is ${formatKES(lease.monthlyRent)}, payable strictly in advance on or before Day ${rentDueDay} of each calendar month. All rent and deposit payments MUST be remitted solely through M-Pesa Pay Bill ${paybill}, Account Number ${accountNo} (${landlordCompany}), or via the verified STK Push prompt on the ${propertyName} Resident Portal. Electronic receipts are automatically issued upon reconciliation to this specific Lease (${lease.leaseNumber} — Unit ${unitNo}).`
+    'RENT & PAYMENT TERMS (RENT ONLY)',
+    `The agreed monthly rent is ${formatKES(lease.monthlyRent)}, payable strictly in advance on or before Day ${rentDueDay} of each calendar month. The Landlord collects monthly rent and refundable security deposit only. All rent and deposit payments MUST be remitted solely through M-Pesa Pay Bill ${paybill}, Account Number ${accountNo} (${landlordCompany}), or via the verified STK Push prompt on the ${propertyName} Resident Portal. Electronic receipts are automatically issued upon reconciliation to this specific Lease (${lease.leaseNumber} — Unit ${unitNo}).`
   )
 
   addClause(
     '4',
     'SECURITY DEPOSIT',
-    `The Tenant shall maintain a refundable Security Deposit of ${formatKES(lease.depositAmount)} (Current Status: ${depositStatus}) held by the Landlord as security against unpaid rent, utility arrears, lost keys/access cards, or damage beyond reasonable wear and tear. The Security Deposit shall NOT be applied by the Tenant toward the final month's rent without prior written approval. Subject to joint move-out inspection and settlement of all bills, the Landlord shall refund the balance of the deposit within thirty (30) days of vacant possession.`
+    `The Tenant shall maintain a refundable Security Deposit of ${formatKES(lease.depositAmount)} (Current Status: ${depositStatus}) held by the Landlord as security against unpaid rent, lost keys/access cards, or damage beyond reasonable wear and tear. The Security Deposit shall NOT be applied by the Tenant toward the final month's rent without prior written approval. Subject to joint move-out inspection and clearance of rent arrears, the Landlord shall refund the balance of the deposit within thirty (30) days of vacant possession.`
   )
 
   addClause(
     '5',
     'UTILITIES, REPAIRS & MAINTENANCE',
-    `The Tenant shall punctually pay all metered utilities consumed in Unit ${unitNo} (including electricity, water, and internet/TV subscriptions where separately billed) and maintain the interior of the premises in clean, tenantable condition. The Landlord shall maintain the structural integrity, roof, external walls, and shared building services. Any defect or maintenance issue must be reported promptly through the ${propertyName} Resident Portal.`
+    `Water, electricity, and internet/TV services are NOT collected by the Landlord and shall be paid directly by the Tenant to the respective service providers. The Tenant shall maintain the interior of Unit ${unitNo} in clean, tenantable condition. The Landlord shall maintain the structural integrity, roof, external walls, and shared building services. Any maintenance defect must be reported promptly through the ${propertyName} Resident Portal.`
   )
 
   addClause(

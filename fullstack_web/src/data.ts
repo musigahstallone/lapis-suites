@@ -1062,7 +1062,7 @@ export async function processDirectPayment(payment: {
   return savedTx
 }
 
-// Analytics Computeds in KES
+// Analytics Computeds in KES (Rent & Security Deposits Only — with Prior Months' Arrears Breakdown)
 export const dashboardAnalytics = computed(() => {
   const totalUnits = store.units.length
   const occupiedUnits = store.units.filter(u => u.status === 'occupied').length
@@ -1070,20 +1070,44 @@ export const dashboardAnalytics = computed(() => {
   const maintenanceUnits = store.units.filter(u => u.status === 'maintenance').length
   const occupancyRate = totalUnits > 0 ? (occupiedUnits / totalUnits) * 100 : 0
 
-  const monthlyRecurringRevenue = store.leases
-    .filter(l => l.status === 'active')
-    .reduce((sum, l) => sum + l.monthlyRent, 0)
+  const nowDate = new Date()
+  const nowMonth = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, '0')}`
+  const activeOrPendingLeases = store.leases.filter(
+    l => l.status === 'active' || l.status === 'pending_deposit'
+  )
 
-  const totalPotentialRevenue = store.units.reduce((sum, u) => sum + getUnitMonthlyRent(u), 0)
-  // Pending Collections: Derived strictly from SUM(active monthly rent - reconciled rent payments) for active leases
-  const pendingCollections = store.tenants.reduce((sum, t) => {
-    const standing = getTenantFinancialStanding(t)
-    return sum + (standing.balance > 0 ? standing.balance : 0)
+  const monthlyRecurringRevenue = activeOrPendingLeases.reduce((sum, l) => sum + (l.monthlyRent || 0), 0)
+
+  // Deposits expected this month: leases starting this calendar month + any still-unpaid security deposits
+  const depositsExpectedThisMonth = activeOrPendingLeases.reduce((sum, l) => {
+    const startedThisMonth = String(l.startDate || '').startsWith(nowMonth)
+    const depositUnpaid = !l.depositPaid
+    return sum + (startedThisMonth || depositUnpaid ? Number(l.depositAmount || 0) : 0)
   }, 0)
 
-  const nowMonth = new Date().toISOString().slice(0, 7)
+  const totalExpectedThisMonth = monthlyRecurringRevenue + depositsExpectedThisMonth
+
+  const totalPotentialRevenue = store.units.reduce((sum, u) => sum + getUnitMonthlyRent(u), 0)
+
+  // Pending Collections & Prior Months' Arrears (strictly per-lease FIFO isolation)
+  let pendingCollections = 0
+  let priorMonthsArrears = 0
+  for (const lease of activeOrPendingLeases) {
+    const tenant = store.tenants.find(t => t.id === lease.tenantId)
+    const st = tenant ? getTenantFinancialStanding(tenant, lease) : null
+    const leaseBalance = lease.leaseBalance !== undefined ? Math.max(0, Number(lease.leaseBalance)) : (st?.balance || 0)
+    const leaseBilled = lease.leaseBilled !== undefined ? Number(lease.leaseBilled) : (st?.totalBilled || 0)
+    const leasePaid = lease.leasePaid !== undefined ? Number(lease.leasePaid) : (st?.totalPaid || 0)
+    pendingCollections += leaseBalance
+
+    const startedThisMonth = String(lease.startDate || '').startsWith(nowMonth)
+    const thisMonthNewCharges = (lease.monthlyRent || 0) + (startedThisMonth ? Number(lease.depositAmount || 0) : 0)
+    const priorBilled = Math.max(0, leaseBilled - thisMonthNewCharges)
+    priorMonthsArrears += Math.max(0, priorBilled - leasePaid)
+  }
+
   const currentMonthCollections = store.transactions
-    .filter(tx => (tx.status === 'reconciled' || tx.reconciled) && tx.date.startsWith(nowMonth))
+    .filter(tx => (tx.status === 'reconciled' || tx.reconciled) && String(tx.date || '').startsWith(nowMonth))
     .reduce((sum, tx) => sum + tx.amount, 0)
 
   const breakdowns = (store.unitTypes || []).map(ut => {
@@ -1094,8 +1118,8 @@ export const dashboardAnalytics = computed(() => {
     const vacant = list.filter(u => u.status === 'vacant').length
     const maintenance = list.filter(u => u.status === 'maintenance').length
     const typeRate = count > 0 ? Math.round((occupied / count) * 100) : 0
-    const activeRent = store.leases
-      .filter(l => l.status === 'active' && l.unitType === type)
+    const activeRent = activeOrPendingLeases
+      .filter(l => l.unitType === type)
       .reduce((sum, l) => sum + l.monthlyRent, 0)
     const potentialRent = list.reduce((sum, u) => sum + getUnitMonthlyRent(u), 0)
     const avgRent = count > 0 ? Math.round(potentialRent / count) : 0
@@ -1121,8 +1145,11 @@ export const dashboardAnalytics = computed(() => {
     maintenanceUnits,
     occupancyRate: Math.round(occupancyRate * 10) / 10,
     monthlyRecurringRevenue,
+    depositsExpectedThisMonth,
+    totalExpectedThisMonth,
     totalPotentialRevenue,
     pendingCollections,
+    priorMonthsArrears,
     currentMonthCollections,
     breakdowns
   }

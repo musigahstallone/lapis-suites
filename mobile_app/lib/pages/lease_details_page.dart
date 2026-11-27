@@ -139,7 +139,12 @@ class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
                   'Deposit',
                   'KES ${l.depositAmount.toLocaleString()} · ${l.isDepositSettled ? "Paid" : "Pending"}',
                 ),
-                _item('Term', '${formatShortDate(l.startDate)} – ${formatShortDate(l.endDate)}'),
+                _item(
+                  'Term',
+                  l.endDate.trim().isNotEmpty
+                      ? '${formatShortDate(l.startDate)} – ${formatShortDate(l.endDate)}'
+                      : 'From ${formatShortDate(l.startDate)} · Ongoing',
+                ),
                 _item('Next Due', formatShortDate(l.nextPaymentDueDate)),
               ],
             ),
@@ -188,12 +193,12 @@ class _LeaseDetailsPageState extends State<LeaseDetailsPage> {
                 Text('Key Tenancy Clauses', style: flex(13.5, color: C.textPrimary)),
                 const SizedBox(height: 10),
                 _clause(
-                  '1. Rent & Official Payment Channel',
-                  'KES ${l.monthlyRent.toLocaleString()} payable in advance on or before Day $dueDay of each month strictly via M-Pesa Pay Bill $paybill, Account $accountNo ($recipient).',
+                  '1. Rent Only & Official Payment Channel',
+                  'KES ${l.monthlyRent.toLocaleString()} payable in advance on or before Day $dueDay of each month strictly via M-Pesa Pay Bill $paybill, Account $accountNo ($recipient). Landlord collects rent & security deposit only — water and electricity are settled directly by the resident with utility providers.',
                 ),
                 _clause(
                   '2. Refundable Security Deposit',
-                  'KES ${l.depositAmount.toLocaleString()} (${l.isDepositSettled ? "Verified Paid" : "Pending"}) held against arrears or damages beyond fair wear and tear; refunded within 30 days after move-out inspection.',
+                  'KES ${l.depositAmount.toLocaleString()} (${l.isDepositSettled ? "Verified Paid" : "Pending"}) held against unpaid rent or damages beyond fair wear and tear; refunded within 30 days after move-out inspection.',
                 ),
                 _clause(
                   '3. Notice Period & Conduct',

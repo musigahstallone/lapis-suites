@@ -62,28 +62,34 @@ router.post('/units', authenticateToken, requireRole(['landlord']), async (req: 
     if (!unitNumber || !type) return res.status(400).json({ error: 'Unit number and type are required' })
 
     const cleanNumber = String(unitNumber).trim().toUpperCase()
+    const cleanType = String(type).trim()
     const existing = await db.collection('units').findOne({ unitNumber: cleanNumber })
     if (existing) {
       return res.status(409).json({ error: `Unit ${cleanNumber} already exists in the system` })
     }
 
+    const typeExists = await db.collection('unit_types').findOne({ key: cleanType })
+    if (!typeExists) {
+      return res.status(400).json({ error: `Unit type "${cleanType}" does not exist. Create or select a valid unit type first.` })
+    }
+
     const newUnit = {
       id: generateHexObjectId(),
       unitNumber: cleanNumber,
-      type: String(type).trim(),
+      type: cleanType,
       status: 'vacant',
       currentTenantId: null,
       currentLeaseId: null,
       createdAt: new Date().toISOString()
     }
     await db.collection('units').insertOne(newUnit)
-    logServerEvent('UNITS', `Created unit in MongoDB: ${cleanNumber} (${type})`)
+    logServerEvent('UNITS', `Created unit in MongoDB: ${cleanNumber} (${cleanType})`)
     await logAuditEvent({
       actor: req.user,
       action: 'unit.create',
       entityType: 'unit',
       entityId: newUnit.id,
-      summary: `Created unit ${cleanNumber} (${type})`
+      summary: `Created unit ${cleanNumber} (${cleanType})`
     })
     res.status(201).json(newUnit)
   } catch (err: any) {
@@ -96,7 +102,7 @@ router.put('/units/:id', authenticateToken, requireRole(['landlord']), async (re
   try {
     const db = getDb()
     const id = String(req.params.id)
-    const { type, status } = req.body
+    const { unitNumber, type, status } = req.body
 
     const existing = await db.collection('units').findOne({ id })
     if (!existing) return res.status(404).json({ error: 'Unit not found' })
@@ -111,6 +117,31 @@ router.put('/units/:id', authenticateToken, requireRole(['landlord']), async (re
     const isOccupied = existing.status === 'occupied' || Boolean(existing.currentTenantId) || Boolean(existing.currentLeaseId)
     const updates: any = { updatedAt: new Date().toISOString() }
 
+    if (unitNumber !== undefined) {
+      const cleanNumber = String(unitNumber).trim().toUpperCase()
+      if (cleanNumber && cleanNumber !== existing.unitNumber) {
+        if (isOccupied) {
+          return res.status(409).json({
+            error: `Cannot rename Unit ${existing.unitNumber} while occupied under an active lease.`
+          })
+        }
+        const [leaseRefs, txRefs] = await Promise.all([
+          db.collection('leases').countDocuments({ $or: [{ unitId: id }, { unitNumber: existing.unitNumber }] }),
+          db.collection('transactions').countDocuments({ $or: [{ unitId: id }, { unitNumber: existing.unitNumber }] })
+        ])
+        if (leaseRefs > 0 || txRefs > 0) {
+          return res.status(409).json({
+            error: `Cannot rename Unit ${existing.unitNumber} because historical lease or payment records reference it.`
+          })
+        }
+        const dup = await db.collection('units').findOne({ unitNumber: cleanNumber, id: { $ne: id } })
+        if (dup) {
+          return res.status(409).json({ error: `Unit ${cleanNumber} already exists in the system.` })
+        }
+        updates.unitNumber = cleanNumber
+      }
+    }
+
     if (type !== undefined) {
       const cleanType = String(type).trim()
       if (cleanType && cleanType !== existing.type) {
@@ -118,6 +149,10 @@ router.put('/units/:id', authenticateToken, requireRole(['landlord']), async (re
           return res.status(400).json({
             error: `Cannot change the unit type of Unit ${existing.unitNumber} while occupied under an active lease.`
           })
+        }
+        const typeExists = await db.collection('unit_types').findOne({ key: cleanType })
+        if (!typeExists) {
+          return res.status(400).json({ error: `Unit type "${cleanType}" does not exist.` })
         }
         updates.type = cleanType
       }
@@ -135,7 +170,7 @@ router.put('/units/:id', authenticateToken, requireRole(['landlord']), async (re
   }
 })
 
-// DELETE /api/units/:id (Landlord only)
+// DELETE /api/units/:id (Landlord only — protects historical leases & payments from orphaned references)
 router.delete('/units/:id', authenticateToken, requireRole(['landlord']), async (req: AuthRequest, res: Response) => {
   try {
     const db = getDb()
@@ -151,6 +186,16 @@ router.delete('/units/:id', authenticateToken, requireRole(['landlord']), async 
     const activeLease = await db.collection('leases').findOne({ unitId: id, status: { $in: ['active', 'pending_deposit'] } })
     if (activeLease) {
       return res.status(400).json({ error: `Cannot delete Unit ${unit.unitNumber} with an active lease agreement.` })
+    }
+
+    const [historicalLeases, historicalTxs] = await Promise.all([
+      db.collection('leases').countDocuments({ unitId: id }),
+      db.collection('transactions').countDocuments({ unitId: id })
+    ])
+    if (historicalLeases > 0 || historicalTxs > 0) {
+      return res.status(409).json({
+        error: `Cannot delete Unit ${unit.unitNumber} because ${historicalLeases} lease record(s) and ${historicalTxs} payment record(s) reference it. Keep it vacant to preserve financial history.`
+      })
     }
 
     await db.collection('units').deleteOne({ id })

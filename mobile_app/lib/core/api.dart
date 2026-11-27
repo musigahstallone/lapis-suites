@@ -1126,12 +1126,16 @@ class ApiService {
 
   static Future<Map<String, dynamic>> updateUnit(
     String id, {
+    String? unitNumber,
     String? type,
     String? status,
   }) async {
     try {
       final body = <String, dynamic>{};
-      if (type != null) body['type'] = type;
+      if (unitNumber != null && unitNumber.trim().isNotEmpty) {
+        body['unitNumber'] = unitNumber.trim().toUpperCase();
+      }
+      if (type != null && type.trim().isNotEmpty) body['type'] = type.trim();
       if (status != null) body['status'] = status;
 
       final res = await http
@@ -1144,9 +1148,25 @@ class ApiService {
       final data = _safeDecode(res);
       if (res.statusCode == 200) {
         triggerRealtimeRefresh();
-        return {'success': true};
+        return {'success': true, 'unit': data};
       }
       return {'success': false, 'error': _extractError(res, data, 'Could not update unit.')};
+    } catch (e) {
+      return {'success': false, 'error': friendlyError(e)};
+    }
+  }
+
+  static Future<Map<String, dynamic>> deleteUnit(String id) async {
+    try {
+      final res = await http
+          .delete(Uri.parse('$baseUrl/api/units/$id'), headers: _headers)
+          .timeout(const Duration(seconds: 10));
+      final data = _safeDecode(res);
+      if (res.statusCode == 200) {
+        triggerRealtimeRefresh();
+        return {'success': true};
+      }
+      return {'success': false, 'error': _extractError(res, data, 'Could not delete unit.')};
     } catch (e) {
       return {'success': false, 'error': friendlyError(e)};
     }
@@ -1159,7 +1179,9 @@ class ApiService {
     required int monthlyRent,
     required int depositAmount,
     required String startDate,
-    required String endDate,
+    String endDate = '',
+    bool depositPaid = false,
+    String? terms,
   }) async {
     try {
       final res = await http
@@ -1173,7 +1195,9 @@ class ApiService {
               'monthlyRent': monthlyRent,
               'depositAmount': depositAmount,
               'startDate': startDate,
-              'endDate': endDate,
+              'endDate': endDate.trim(),
+              'depositPaid': depositPaid,
+              if (terms != null && terms.trim().isNotEmpty) 'terms': terms.trim(),
             }),
           )
           .timeout(const Duration(seconds: 12));
@@ -1293,9 +1317,12 @@ class ApiService {
     String leaseId, {
     String changeType = 'rent_adjustment',
     String? effectiveDate,
+    String? newStartDate,
     int? newRent,
     int? newDeposit,
     String? newEndDate,
+    bool clearEndDate = false,
+    bool? depositPaid,
     String? reason,
     String? notes,
   }) async {
@@ -1307,9 +1334,12 @@ class ApiService {
             body: jsonEncode({
               'changeType': changeType,
               if (effectiveDate != null && effectiveDate.isNotEmpty) 'effectiveDate': effectiveDate,
+              if (newStartDate != null && newStartDate.isNotEmpty) 'newStartDate': newStartDate,
               if (newRent != null && newRent > 0) 'newRent': newRent,
               if (newDeposit != null && newDeposit >= 0) 'newDeposit': newDeposit,
-              if (newEndDate != null && newEndDate.isNotEmpty) 'newEndDate': newEndDate,
+              if (clearEndDate) 'clearEndDate': true,
+              if (!clearEndDate && newEndDate != null && newEndDate.isNotEmpty) 'newEndDate': newEndDate,
+              if (depositPaid != null) 'depositPaid': depositPaid,
               'reason': (reason ?? '').trim().isNotEmpty ? reason!.trim() : 'Lease update',
               if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
             }),

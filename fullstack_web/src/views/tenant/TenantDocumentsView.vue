@@ -78,7 +78,7 @@ function togglePreview(leaseId: string) {
                 <span :class="['badge', l.status]">{{ l.status }}</span>
               </div>
               <p style="font-size: 0.8rem; color: #64748b; margin-top: 3px;">
-                Agreement #{{ l.leaseNumber }} · {{ formatHumanDate(l.startDate) }} to {{ formatHumanDate(l.endDate) }} · Rent: {{ formatKES(l.monthlyRent) }}/mo · Deposit: {{ formatKES(l.depositAmount) }}
+                Agreement #{{ l.leaseNumber }} · {{ formatHumanDate(l.startDate) }} {{ l.endDate ? `to ${formatHumanDate(l.endDate)}` : '· Ongoing' }} · Rent: {{ formatKES(l.monthlyRent) }}/mo · Deposit: {{ formatKES(l.depositAmount) }}
               </p>
             </div>
 

@@ -43,6 +43,8 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
   }
 
   final ScrollController _payScrollCtrl = ScrollController();
+  final TextEditingController _paySearchCtrl = TextEditingController();
+  String _paySearch = '';
   int _payPage = 1;
   bool _isLoadingMorePay = false;
   bool _hasMorePay = true;
@@ -59,6 +61,7 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
   void dispose() {
     ApiService.realtimeUpdateNotifier.removeListener(_onRealtimeUpdate);
     _payScrollCtrl.dispose();
+    _paySearchCtrl.dispose();
     super.dispose();
   }
 
@@ -732,10 +735,21 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
     );
   }
 
-  // --- TAB 1: PAYMENTS (strictly scoped to selected unit/lease) ---
+  // --- TAB 1: PAYMENTS (strictly scoped to selected unit/lease, with search ONLY here) ---
   Widget _buildPaymentsSliver() {
     final l = _lease;
-    final scopedTxs = _txsForActiveLease;
+    final q = _paySearch;
+    final baseTxs = _txsForActiveLease;
+    final scopedTxs = q.isEmpty
+        ? baseTxs
+        : baseTxs.where((tx) {
+            return tx.reference.toLowerCase().contains(q) ||
+                tx.amount.toString().contains(q) ||
+                tx.date.toLowerCase().contains(q) ||
+                formatShortDate(tx.date).toLowerCase().contains(q) ||
+                tx.statusDisplayLabel.toLowerCase().contains(q);
+          }).toList();
+
     return CustomScrollView(
       controller: _payScrollCtrl,
       physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
@@ -757,9 +771,71 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
             ),
             const SizedBox(width: 4),
           ],
-          bottom: const PreferredSize(
-            preferredSize: Size.fromHeight(1),
-            child: Divider(height: 1, color: C.borderLight),
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(50),
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: SizedBox(
+                    height: 38,
+                    child: TextField(
+                      controller: _paySearchCtrl,
+                      onChanged: (v) => setState(() => _paySearch = v.trim().toLowerCase()),
+                      style: sans(12.5, color: C.textPrimary),
+                      decoration: InputDecoration(
+                        hintText: 'Search M-Pesa code, amount or date...',
+                        hintStyle: sans(12, color: C.textMuted),
+                        prefixIcon: const SizedBox(
+                          width: 36,
+                          height: 38,
+                          child: Center(
+                            child: LapisIcon(LapisIconName.search, size: 16, color: C.textMuted),
+                          ),
+                        ),
+                        prefixIconConstraints: const BoxConstraints(
+                          minWidth: 36,
+                          maxWidth: 36,
+                          minHeight: 38,
+                          maxHeight: 38,
+                        ),
+                        suffixIcon: q.isNotEmpty
+                            ? GestureDetector(
+                                onTap: () {
+                                  _paySearchCtrl.clear();
+                                  setState(() => _paySearch = '');
+                                },
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                                  child: Center(
+                                    widthFactor: 1,
+                                    child: Text('Clear', style: sans(11, color: C.navy, weight: FontWeight.w600)),
+                                  ),
+                                ),
+                              )
+                            : null,
+                        filled: true,
+                        fillColor: C.canvas,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(9),
+                          borderSide: const BorderSide(color: C.border),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(9),
+                          borderSide: const BorderSide(color: C.border),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(9),
+                          borderSide: const BorderSide(color: C.navy, width: 1.2),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const Divider(height: 1, color: C.borderLight),
+              ],
+            ),
           ),
         ),
         if (_activeLeases.length > 1)
@@ -768,7 +844,9 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
           SliverFillRemaining(
             child: Center(
               child: Text(
-                l != null ? 'No payments yet for Unit ${l.unitNumber}.' : 'No payments yet.',
+                q.isNotEmpty
+                    ? 'No matching payments found.'
+                    : (l != null ? 'No payments yet for Unit ${l.unitNumber}.' : 'No payments yet.'),
                 style: sans(12.5, color: C.textMuted),
               ),
             ),
@@ -777,7 +855,7 @@ class _ResidentHomeScreenState extends State<ResidentHomeScreen> {
           SliverPadding(
             padding: const EdgeInsets.symmetric(vertical: 8),
             sliver: SliverList.builder(
-              itemCount: scopedTxs.length + (_hasMorePay ? 1 : 0),
+              itemCount: scopedTxs.length + (q.isEmpty && _hasMorePay ? 1 : 0),
               itemBuilder: (_, i) {
                 if (i == scopedTxs.length) {
                   return const Padding(

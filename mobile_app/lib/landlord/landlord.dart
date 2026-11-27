@@ -260,9 +260,8 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
     }
   }
 
-  // --- TAB 0: HOME DASHBOARD (SliverAppBar + Precision Hero + 3-Col Circular Actions + Clean Minimal Lists) ---
+  // --- TAB 0: HOME DASHBOARD (SliverAppBar + Precision Hero + 4-Col Circular Actions + Clean Minimal Lists) ---
   Widget _buildHomeSliver(DashboardData d) {
-    final openTickets = _tickets.where((t) => t.status != 'resolved' && t.status != 'cancelled').length;
     final pendingApprovals = d.transactions.where((tx) => tx.needsApproval).length;
     final firstName = firstNameFrom(ApiService.currentUser?['name']?.toString(), fallback: 'Admin');
 
@@ -313,16 +312,16 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
                   ),
                 ),
 
-              // 1. Dark Navy Hero Card with Exact Unrounded Arrears + Collection Progress Bar
+              // 1. Minimalist Monthly Collections Hero Card (Received This Month, Expected Rent+Deposits, Deposits Due, Prior Arrears)
               OrbixOverviewCard(
-                title: 'Monthly Roll',
+                title: 'Monthly Rent',
                 period: currentMonthYearLabel(),
-                heroLabel: 'Expected Rent',
+                heroLabel: 'Received This Month',
                 heroPrefix: 'KES',
-                heroValue: d.totalRentRoll.toLocaleString(),
+                heroValue: d.collectedThisMonth.toLocaleString(),
                 collectionProgress: d.collectionProgress,
                 collectedAmount: d.collectedThisMonth,
-                expectedAmount: d.totalRentRoll,
+                expectedAmount: d.totalExpectedThisMonth,
                 extraAction: GestureDetector(
                   onTap: _isReconciling ? null : _handleReconcile,
                   child: Container(
@@ -345,15 +344,22 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
                   ),
                 ),
                 metrics: [
-                  MetricItem('Occupancy', '${d.occupancyRate.toStringAsFixed(0)}%'),
-                  MetricItem('Units', '${d.occupiedUnits}/${d.units.length}'),
                   MetricItem(
-                    'Arrears',
-                    d.totalArrears.toLocaleString(),
+                    'Expected',
+                    d.totalExpectedThisMonth.toLocaleString(),
                     prefix: 'KES',
-                    flex: 2,
                   ),
-                  MetricItem('Tickets', '$openTickets'),
+                  MetricItem(
+                    'Deposits Due',
+                    d.depositsExpectedThisMonth.toLocaleString(),
+                    prefix: 'KES',
+                  ),
+                  MetricItem(
+                    'Prior Arrears',
+                    d.priorMonthsArrears.toLocaleString(),
+                    prefix: 'KES',
+                  ),
+                  MetricItem('Occupied', '${d.occupiedUnits}/${d.units.length}'),
                 ],
               ),
 
@@ -402,6 +408,7 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
                         label: 'Add Unit',
                         onTap: () => showCreateUnitSheet(
                           context,
+                          unitTypes: d.unitTypes,
                           onCreated: () => _loadPortfolio(silent: true),
                         ),
                       ),
@@ -734,7 +741,11 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
                 child: Text('Types', style: sans(12, color: C.textSecondary, weight: FontWeight.w600)),
               ),
               TextButton(
-                onPressed: () => showCreateUnitSheet(context, onCreated: () => _loadPortfolio(silent: true)),
+                onPressed: () => showCreateUnitSheet(
+                  context,
+                  unitTypes: d.unitTypes,
+                  onCreated: () => _loadPortfolio(silent: true),
+                ),
                 child: Text('+ Unit', style: sans(12, color: C.navy, weight: FontWeight.w700)),
               ),
             ] else if (_propertySegment == 1) ...[
@@ -810,7 +821,7 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
     required ValueChanged<String> onChanged,
   }) {
     return SizedBox(
-      height: 36,
+      height: 38,
       child: TextField(
         controller: controller,
         onChanged: onChanged,
@@ -818,11 +829,19 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
         decoration: InputDecoration(
           hintText: hint,
           hintStyle: sans(12, color: C.textMuted),
-          prefixIcon: const Padding(
-            padding: EdgeInsets.only(left: 10, right: 6),
-            child: LapisIcon(LapisIconName.search, size: 15, color: C.textMuted),
+          prefixIcon: const SizedBox(
+            width: 36,
+            height: 38,
+            child: Center(
+              child: LapisIcon(LapisIconName.search, size: 16, color: C.textMuted),
+            ),
           ),
-          prefixIconConstraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          prefixIconConstraints: const BoxConstraints(
+            minWidth: 36,
+            maxWidth: 36,
+            minHeight: 38,
+            maxHeight: 38,
+          ),
           suffixIcon: value.isNotEmpty
               ? GestureDetector(
                   onTap: () {
@@ -918,7 +937,13 @@ class _LandlordPortfolioScreenState extends State<LandlordPortfolioScreen> {
             amount: u.monthlyRent.toLocaleString(),
             status: occ ? StatusPill.mint('Occupied', hasDot: false) : StatusPill.amber('Vacant', hasDot: false),
             onTap: () => Navigator.of(context)
-                .push(MaterialPageRoute(builder: (_) => UnitDetailsPage(unit: u, allTenants: d.tenants)))
+                .push(MaterialPageRoute(
+                  builder: (_) => UnitDetailsPage(
+                    unit: u,
+                    allTenants: d.tenants,
+                    unitTypes: d.unitTypes,
+                  ),
+                ))
                 .then((_) => _loadPortfolio(silent: true)),
           );
         },

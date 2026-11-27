@@ -1826,12 +1826,39 @@ void showCreateMaintenanceSheet(
   );
 }
 
-/// 6. Quick Create Unit Sheet (with proper validation & error reporting)
-void showCreateUnitSheet(BuildContext context, {VoidCallback? onCreated}) {
+/// 6. Quick Create Unit Sheet (Dynamically loads Unit Types from backend — NEVER hardcoded)
+void showCreateUnitSheet(
+  BuildContext context, {
+  List<UnitTypeModel> unitTypes = const [],
+  VoidCallback? onCreated,
+}) {
   final unitCtrl = TextEditingController();
-  String type = 'studio';
+  List<UnitTypeModel> availableTypes = List.of(unitTypes);
+  String? selectedType = availableTypes.isNotEmpty ? availableTypes.first.key : null;
+  bool isLoadingTypes = availableTypes.isEmpty;
   bool isSaving = false;
   String? errorMessage;
+  bool initialized = false;
+
+  Future<void> loadTypes(StateSetter setMState) async {
+    setMState(() {
+      isLoadingTypes = true;
+      errorMessage = null;
+    });
+    final res = await ApiService.fetchUnitTypes();
+    setMState(() {
+      isLoadingTypes = false;
+      if (res['success'] == true) {
+        availableTypes = (res['unitTypes'] as List<UnitTypeModel>?) ?? [];
+        if (availableTypes.isNotEmpty &&
+            (selectedType == null || !availableTypes.any((t) => t.key == selectedType))) {
+          selectedType = availableTypes.first.key;
+        }
+      } else {
+        errorMessage = res['error']?.toString() ?? 'Could not load unit types.';
+      }
+    });
+  }
 
   showModalBottomSheet(
     context: context,
@@ -1842,6 +1869,12 @@ void showCreateUnitSheet(BuildContext context, {VoidCallback? onCreated}) {
     ),
     builder: (ctx) => StatefulBuilder(
       builder: (ctx, setMState) {
+        if (!initialized) {
+          initialized = true;
+          if (availableTypes.isEmpty) {
+            loadTypes(setMState);
+          }
+        }
         return SafeArea(
           child: Padding(
             padding: EdgeInsets.only(
@@ -1855,7 +1888,22 @@ void showCreateUnitSheet(BuildContext context, {VoidCallback? onCreated}) {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _sheetHandle(),
-                Text('Add New Unit', style: flex(15, color: C.textPrimary)),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Add New Unit', style: flex(15, color: C.textPrimary)),
+                    GestureDetector(
+                      onTap: () => showUnitTypesSheet(
+                        ctx,
+                        onChanged: () => loadTypes(setMState),
+                      ),
+                      child: Text(
+                        'Manage Types',
+                        style: sans(11.5, color: C.navy, weight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 12),
 
                 if (errorMessage != null) ...[
@@ -1875,25 +1923,71 @@ void showCreateUnitSheet(BuildContext context, {VoidCallback? onCreated}) {
 
                 Text('Suite Type', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
                 const SizedBox(height: 5),
-                DropdownButtonFormField<String>(
-                  initialValue: type,
-                  dropdownColor: C.surface,
-                  style: sans(12.5, color: C.textPrimary),
-                  decoration: fieldDecoration(),
-                  items: const [
-                    DropdownMenuItem(value: 'studio', child: Text('Studio Suite')),
-                    DropdownMenuItem(value: 'one-bedroom', child: Text('One-Bedroom')),
-                    DropdownMenuItem(value: 'two-bedroom', child: Text('Two-Bedroom')),
-                    DropdownMenuItem(value: 'penthouse-suite', child: Text('Penthouse Suite')),
-                  ],
-                  onChanged: (v) => setMState(() => type = v ?? 'studio'),
-                ),
+                if (isLoadingTypes)
+                  Container(
+                    height: 46,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: C.cardSubtle,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: C.border),
+                    ),
+                    child: const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: C.navy),
+                    ),
+                  )
+                else if (availableTypes.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: C.amberBg,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: C.amberBorder),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'No unit types configured yet.',
+                            style: sans(12, color: C.amberText, weight: FontWeight.w600),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => showUnitTypesSheet(
+                            ctx,
+                            onChanged: () => loadTypes(setMState),
+                          ),
+                          child: Text('+ Add Type', style: sans(12, color: C.navy, weight: FontWeight.w700)),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedType,
+                    dropdownColor: C.surface,
+                    isExpanded: true,
+                    style: sans(12.5, color: C.textPrimary),
+                    decoration: fieldDecoration(),
+                    items: availableTypes
+                        .map((ut) => DropdownMenuItem(
+                              value: ut.key,
+                              child: Text(
+                                '${ut.name} · KES ${ut.baseRent.toLocaleString()}/mo',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ))
+                        .toList(),
+                    onChanged: (v) => setMState(() => selectedType = v),
+                  ),
                 const SizedBox(height: 16),
 
                 SizedBox(
                   height: 43,
                   child: ElevatedButton(
-                    onPressed: isSaving
+                    onPressed: (isSaving || isLoadingTypes || selectedType == null)
                         ? null
                         : () async {
                             final no = unitCtrl.text.trim();
@@ -1905,7 +1999,10 @@ void showCreateUnitSheet(BuildContext context, {VoidCallback? onCreated}) {
                               isSaving = true;
                               errorMessage = null;
                             });
-                            final res = await ApiService.createUnit(unitNumber: no, type: type);
+                            final res = await ApiService.createUnit(
+                              unitNumber: no,
+                              type: selectedType!,
+                            );
                             if (!ctx.mounted) return;
                             setMState(() => isSaving = false);
                             if (res['success'] == true) {
@@ -1930,7 +2027,163 @@ void showCreateUnitSheet(BuildContext context, {VoidCallback? onCreated}) {
   );
 }
 
-/// 7. Assign Lease to Vacant Unit Sheet
+/// 6b. Edit Unit Sheet (Dynamic Unit Types — protects occupied units from corrupting active leases)
+void showEditUnitSheet(
+  BuildContext context, {
+  required UnitModel unit,
+  List<UnitTypeModel> unitTypes = const [],
+  VoidCallback? onUpdated,
+}) {
+  final unitCtrl = TextEditingController(text: unit.unitNumber);
+  List<UnitTypeModel> availableTypes = List.of(unitTypes);
+  String selectedType = unit.type;
+  bool isLoadingTypes = availableTypes.isEmpty;
+  bool isSaving = false;
+  String? errorMessage;
+  bool initialized = false;
+
+  Future<void> loadTypes(StateSetter setMState) async {
+    setMState(() => isLoadingTypes = true);
+    final res = await ApiService.fetchUnitTypes();
+    setMState(() {
+      isLoadingTypes = false;
+      if (res['success'] == true) {
+        availableTypes = (res['unitTypes'] as List<UnitTypeModel>?) ?? [];
+        if (availableTypes.isNotEmpty && !availableTypes.any((t) => t.key == selectedType)) {
+          selectedType = availableTypes.first.key;
+        }
+      }
+    });
+  }
+
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: C.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+    ),
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setMState) {
+        if (!initialized) {
+          initialized = true;
+          if (availableTypes.isEmpty) loadTypes(setMState);
+        }
+        final occ = unit.isOccupied;
+        return SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 12,
+              bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _sheetHandle(),
+                Text('Edit Unit ${unit.unitNumber}', style: flex(15, color: C.textPrimary)),
+                const SizedBox(height: 10),
+
+                if (occ) ...[
+                  const InlineAlert(
+                    message: 'Unit is occupied. Terminate or transfer its active lease before renaming or changing its suite type.',
+                    isInfo: true,
+                  ),
+                  const SizedBox(height: 10),
+                ],
+
+                if (errorMessage != null) ...[
+                  InlineAlert(message: errorMessage!),
+                  const SizedBox(height: 10),
+                ],
+
+                Text('Unit Number', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
+                const SizedBox(height: 5),
+                TextField(
+                  controller: unitCtrl,
+                  enabled: !occ,
+                  textCapitalization: TextCapitalization.characters,
+                  style: mono(13, color: occ ? C.textMuted : C.textPrimary),
+                  decoration: fieldDecoration(hintText: 'e.g. 402B'),
+                ),
+                const SizedBox(height: 12),
+
+                Text('Suite Type', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
+                const SizedBox(height: 5),
+                if (isLoadingTypes)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Center(child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: C.navy))),
+                  )
+                else
+                  DropdownButtonFormField<String>(
+                    initialValue: availableTypes.any((t) => t.key == selectedType)
+                        ? selectedType
+                        : (availableTypes.isNotEmpty ? availableTypes.first.key : null),
+                    dropdownColor: C.surface,
+                    isExpanded: true,
+                    style: sans(12.5, color: occ ? C.textMuted : C.textPrimary),
+                    decoration: fieldDecoration(),
+                    items: availableTypes
+                        .map((ut) => DropdownMenuItem(
+                              value: ut.key,
+                              child: Text(
+                                '${ut.name} · KES ${ut.baseRent.toLocaleString()}/mo',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ))
+                        .toList(),
+                    onChanged: occ ? null : (v) => setMState(() => selectedType = v ?? selectedType),
+                  ),
+                const SizedBox(height: 16),
+
+                SizedBox(
+                  height: 43,
+                  child: ElevatedButton(
+                    onPressed: (isSaving || occ)
+                        ? null
+                        : () async {
+                            final no = unitCtrl.text.trim();
+                            if (no.isEmpty) {
+                              setMState(() => errorMessage = 'Enter a unit number.');
+                              return;
+                            }
+                            setMState(() {
+                              isSaving = true;
+                              errorMessage = null;
+                            });
+                            final res = await ApiService.updateUnit(
+                              unit.id,
+                              unitNumber: no,
+                              type: selectedType,
+                            );
+                            if (!ctx.mounted) return;
+                            setMState(() => isSaving = false);
+                            if (res['success'] == true) {
+                              Navigator.pop(ctx);
+                              showAppSnackBar(context, 'Unit ${no.toUpperCase()} updated.');
+                              onUpdated?.call();
+                            } else {
+                              setMState(() => errorMessage = res['error']?.toString() ?? 'Could not update unit.');
+                            }
+                          },
+                    child: isSaving
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: C.ctaOn))
+                        : Text('Save Changes', style: sans(12.5, color: C.ctaOn, weight: FontWeight.w600)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    ),
+  );
+}
+
+/// 7. Assign Lease to Vacant Unit Sheet (Editable Start Date + Optional/Blank End Date + All Fields)
 void showAssignLeaseSheet(
   BuildContext context, {
   required UnitModel unit,
@@ -1946,11 +2199,29 @@ void showAssignLeaseSheet(
   final rentCtrl = TextEditingController(text: unit.monthlyRent.toString());
   final depCtrl = TextEditingController(text: unit.monthlyRent.toString());
   final now = DateTime.now();
-  final nextYear = DateTime(now.year + 1, now.month, now.day);
-  final startStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-  final endStr = '${nextYear.year}-${nextYear.month.toString().padLeft(2, '0')}-${nextYear.day.toString().padLeft(2, '0')}';
+  final startCtrl = TextEditingController(
+    text: '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}',
+  );
+  final endCtrl = TextEditingController(); // Intentionally blank unless landlord sets an end date
+  final termsCtrl = TextEditingController();
+  bool depositPaid = false;
   bool isSaving = false;
   String? errorMessage;
+
+  Future<void> pickDate(BuildContext pickerCtx, TextEditingController targetCtrl, StateSetter setMState, {bool isEnd = false}) async {
+    final initial = DateTime.tryParse(targetCtrl.text.trim()) ?? DateTime.now();
+    final picked = await showDatePicker(
+      context: pickerCtx,
+      initialDate: initial,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2035),
+    );
+    if (picked != null) {
+      setMState(() {
+        targetCtrl.text = '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+      });
+    }
+  }
 
   showModalBottomSheet(
     context: context,
@@ -2040,10 +2311,72 @@ void showAssignLeaseSheet(
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
-              Text(
-                '12-month term: $startStr to $endStr',
-                style: sans(11, color: C.textMuted),
+              const SizedBox(height: 12),
+
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Start Date', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
+                        const SizedBox(height: 5),
+                        TextField(
+                          controller: startCtrl,
+                          readOnly: true,
+                          onTap: () => pickDate(ctx, startCtrl, setMState),
+                          style: mono(12, color: C.textPrimary),
+                          decoration: fieldDecoration(hintText: 'YYYY-MM-DD'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('End Date (Optional)', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
+                            if (endCtrl.text.isNotEmpty)
+                              GestureDetector(
+                                onTap: () => setMState(() => endCtrl.clear()),
+                                child: Text('Clear', style: sans(10.5, color: C.navy, weight: FontWeight.w600)),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 5),
+                        TextField(
+                          controller: endCtrl,
+                          readOnly: true,
+                          onTap: () => pickDate(ctx, endCtrl, setMState, isEnd: true),
+                          style: mono(12, color: C.textPrimary),
+                          decoration: fieldDecoration(hintText: 'Leave blank if ongoing'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: depositPaid,
+                activeThumbColor: C.navy,
+                title: Text('Deposit already paid', style: sans(12.5, color: C.textPrimary, weight: FontWeight.w500)),
+                onChanged: (v) => setMState(() => depositPaid = v),
+              ),
+
+              Text('Special Notes (Optional)', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
+              const SizedBox(height: 5),
+              TextField(
+                controller: termsCtrl,
+                maxLines: 2,
+                style: sans(12.5, color: C.textPrimary),
+                decoration: fieldDecoration(hintText: 'Optional agreement notes'),
               ),
               const SizedBox(height: 16),
 
@@ -2059,6 +2392,10 @@ void showAssignLeaseSheet(
                             setMState(() => errorMessage = 'Enter a valid monthly rent.');
                             return;
                           }
+                          if (startCtrl.text.trim().isEmpty) {
+                            setMState(() => errorMessage = 'Select a lease start date.');
+                            return;
+                          }
                           setMState(() {
                             isSaving = true;
                             errorMessage = null;
@@ -2069,8 +2406,10 @@ void showAssignLeaseSheet(
                             unitNumber: unit.unitNumber,
                             monthlyRent: rent,
                             depositAmount: dep,
-                            startDate: startStr,
-                            endDate: endStr,
+                            startDate: startCtrl.text.trim(),
+                            endDate: endCtrl.text.trim(),
+                            depositPaid: depositPaid,
+                            terms: termsCtrl.text.trim(),
                           );
                           if (!ctx.mounted) return;
                           setMState(() => isSaving = false);

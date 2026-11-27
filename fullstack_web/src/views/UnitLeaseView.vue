@@ -123,22 +123,18 @@ const unitAmendments = computed(() => {
 function syncForms() {
   if (!unit.value) return
   const rent = baseRent.value
-  const oneYearLater = new Date()
-  oneYearLater.setFullYear(oneYearLater.getFullYear() + 1)
 
-  if (!assignForm.value.endDate) {
-    assignForm.value.endDate = oneYearLater.toISOString().slice(0, 10)
-  }
+  // End Date is intentionally left blank unless the landlord explicitly sets one
   if (!assignForm.value.monthlyRent) assignForm.value.monthlyRent = rent
   if (!assignForm.value.depositAmount) assignForm.value.depositAmount = rent
   if (!assignForm.value.terms) {
-    assignForm.value.terms = `Standard 12-month residential tenancy agreement for Unit ${unit.value.unitNumber}.`
+    assignForm.value.terms = `Residential tenancy agreement for Unit ${unit.value.unitNumber}. Landlord collects monthly rent and refundable security deposit only (water & electricity settled directly by resident).`
   }
 
   if (activeLease.value) {
     amendForm.value.newRent = activeLease.value.monthlyRent
     amendForm.value.newDeposit = activeLease.value.depositAmount
-    amendForm.value.newEndDate = activeLease.value.endDate
+    amendForm.value.newEndDate = activeLease.value.endDate || ''
   }
 }
 
@@ -166,8 +162,8 @@ async function handleAssignLease() {
     error.value = 'Please select a tenant to assign to this unit.'
     return
   }
-  if (!assignForm.value.startDate || !assignForm.value.endDate) {
-    error.value = 'Please specify valid start and end dates.'
+  if (!assignForm.value.startDate) {
+    error.value = 'Please specify a valid lease start date.'
     return
   }
 
@@ -177,7 +173,7 @@ async function handleAssignLease() {
       tenantId: assignForm.value.tenantId,
       unitId: unit.value.id,
       startDate: assignForm.value.startDate,
-      endDate: assignForm.value.endDate,
+      endDate: assignForm.value.endDate || '',
       monthlyRent: Number(assignForm.value.monthlyRent),
       depositAmount: Number(assignForm.value.depositAmount),
       depositPaid: Boolean(assignForm.value.depositPaid),
@@ -319,8 +315,8 @@ async function handleTerminateLease() {
               <input v-model="assignForm.startDate" type="date" required />
             </div>
             <div class="form-field">
-              <label>Lease End Date *</label>
-              <input v-model="assignForm.endDate" type="date" required />
+              <label>Lease End Date (Optional — leave blank if ongoing)</label>
+              <input v-model="assignForm.endDate" type="date" />
             </div>
           </div>
 

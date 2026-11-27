@@ -164,15 +164,30 @@ void showCreateLeaseSheet(
   final rentCtrl = TextEditingController(text: selectedUnit.monthlyRent.toString());
   final depCtrl = TextEditingController(text: selectedUnit.monthlyRent.toString());
   final now = DateTime.now();
-  final nextYear = DateTime(now.year + 1, now.month, now.day);
   final startCtrl = TextEditingController(
     text: '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}',
   );
-  final endCtrl = TextEditingController(
-    text: '${nextYear.year}-${nextYear.month.toString().padLeft(2, '0')}-${nextYear.day.toString().padLeft(2, '0')}',
-  );
+  final endCtrl = TextEditingController(); // Intentionally blank unless landlord explicitly sets an end date
+  final termsCtrl = TextEditingController();
+  bool depositPaid = false;
   bool isSaving = false;
   String? errorMsg;
+
+  Future<void> pickDate(BuildContext pickerCtx, TextEditingController targetCtrl, StateSetter setMState) async {
+    final initial = DateTime.tryParse(targetCtrl.text.trim()) ?? DateTime.now();
+    final picked = await showDatePicker(
+      context: pickerCtx,
+      initialDate: initial,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2035),
+    );
+    if (picked != null) {
+      setMState(() {
+        targetCtrl.text =
+            '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+      });
+    }
+  }
 
   showModalBottomSheet(
     context: context,
@@ -298,6 +313,8 @@ void showCreateLeaseSheet(
                         const SizedBox(height: 5),
                         TextField(
                           controller: startCtrl,
+                          readOnly: true,
+                          onTap: () => pickDate(ctx, startCtrl, setMState),
                           style: mono(12, color: C.textPrimary),
                           decoration: fieldDecoration(hintText: 'YYYY-MM-DD'),
                         ),
@@ -309,17 +326,45 @@ void showCreateLeaseSheet(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('End Date', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('End Date (Optional)', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
+                            if (endCtrl.text.isNotEmpty)
+                              GestureDetector(
+                                onTap: () => setMState(() => endCtrl.clear()),
+                                child: Text('Clear', style: sans(10.5, color: C.navy, weight: FontWeight.w600)),
+                              ),
+                          ],
+                        ),
                         const SizedBox(height: 5),
                         TextField(
                           controller: endCtrl,
+                          readOnly: true,
+                          onTap: () => pickDate(ctx, endCtrl, setMState),
                           style: mono(12, color: C.textPrimary),
-                          decoration: fieldDecoration(hintText: 'YYYY-MM-DD'),
+                          decoration: fieldDecoration(hintText: 'Leave blank if ongoing'),
                         ),
                       ],
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: depositPaid,
+                activeThumbColor: C.navy,
+                title: Text('Deposit already paid', style: sans(12.5, color: C.textPrimary, weight: FontWeight.w500)),
+                onChanged: (v) => setMState(() => depositPaid = v),
+              ),
+              Text('Special Notes (Optional)', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
+              const SizedBox(height: 5),
+              TextField(
+                controller: termsCtrl,
+                maxLines: 2,
+                style: sans(12.5, color: C.textPrimary),
+                decoration: fieldDecoration(hintText: 'Optional agreement notes'),
               ),
               const SizedBox(height: 18),
               SizedBox(
@@ -334,6 +379,10 @@ void showCreateLeaseSheet(
                             setMState(() => errorMsg = 'Enter a valid monthly rent.');
                             return;
                           }
+                          if (startCtrl.text.trim().isEmpty) {
+                            setMState(() => errorMsg = 'Select a lease start date.');
+                            return;
+                          }
                           setMState(() {
                             isSaving = true;
                             errorMsg = null;
@@ -346,6 +395,8 @@ void showCreateLeaseSheet(
                             depositAmount: dep,
                             startDate: startCtrl.text.trim(),
                             endDate: endCtrl.text.trim(),
+                            depositPaid: depositPaid,
+                            terms: termsCtrl.text.trim(),
                           );
                           if (!ctx.mounted) return;
                           setMState(() => isSaving = false);
@@ -370,19 +421,37 @@ void showCreateLeaseSheet(
   );
 }
 
-/// 3. Amend / Edit Lease Sheet (POST /api/leases/:id/amend)
+/// 3. Amend / Edit Lease Sheet (Editable Start Date, Optional/Blank End Date, Rent, Deposit & Status)
 void showAmendLeaseSheet(
   BuildContext context, {
   required LeaseModel lease,
   VoidCallback? onAmended,
 }) {
   String changeType = 'rent_adjustment';
+  final startCtrl = TextEditingController(text: lease.startDate);
   final rentCtrl = TextEditingController(text: lease.monthlyRent.toString());
   final depCtrl = TextEditingController(text: lease.depositAmount.toString());
   final endCtrl = TextEditingController(text: lease.endDate);
   final reasonCtrl = TextEditingController();
+  bool depositPaid = lease.isDepositSettled;
   bool isSaving = false;
   String? errorMsg;
+
+  Future<void> pickDate(BuildContext pickerCtx, TextEditingController targetCtrl, StateSetter setMState) async {
+    final initial = DateTime.tryParse(targetCtrl.text.trim()) ?? DateTime.now();
+    final picked = await showDatePicker(
+      context: pickerCtx,
+      initialDate: initial,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2035),
+    );
+    if (picked != null) {
+      setMState(() {
+        targetCtrl.text =
+            '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+      });
+    }
+  }
 
   showModalBottomSheet(
     context: context,
@@ -418,7 +487,7 @@ void showAmendLeaseSheet(
                 decoration: fieldDecoration(),
                 items: const [
                   DropdownMenuItem(value: 'rent_adjustment', child: Text('Rent Adjustment')),
-                  DropdownMenuItem(value: 'renewal', child: Text('Lease Renewal / Extension')),
+                  DropdownMenuItem(value: 'renewal', child: Text('Lease Dates / Renewal')),
                   DropdownMenuItem(value: 'deposit_update', child: Text('Deposit Adjustment')),
                   DropdownMenuItem(value: 'terms_update', child: Text('Terms Update')),
                 ],
@@ -463,20 +532,67 @@ void showAmendLeaseSheet(
                 ],
               ),
               const SizedBox(height: 12),
-              Text('End Date', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
-              const SizedBox(height: 5),
-              TextField(
-                controller: endCtrl,
-                style: mono(12.5, color: C.textPrimary),
-                decoration: fieldDecoration(hintText: 'YYYY-MM-DD'),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Start Date', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
+                        const SizedBox(height: 5),
+                        TextField(
+                          controller: startCtrl,
+                          readOnly: true,
+                          onTap: () => pickDate(ctx, startCtrl, setMState),
+                          style: mono(12, color: C.textPrimary),
+                          decoration: fieldDecoration(hintText: 'YYYY-MM-DD'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('End Date (Optional)', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
+                            if (endCtrl.text.isNotEmpty)
+                              GestureDetector(
+                                onTap: () => setMState(() => endCtrl.clear()),
+                                child: Text('Clear', style: sans(10.5, color: C.navy, weight: FontWeight.w600)),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 5),
+                        TextField(
+                          controller: endCtrl,
+                          readOnly: true,
+                          onTap: () => pickDate(ctx, endCtrl, setMState),
+                          style: mono(12, color: C.textPrimary),
+                          decoration: fieldDecoration(hintText: 'Leave blank if ongoing'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: depositPaid,
+                activeThumbColor: C.navy,
+                title: Text('Deposit settled', style: sans(12.5, color: C.textPrimary, weight: FontWeight.w500)),
+                onChanged: (v) => setMState(() => depositPaid = v),
+              ),
               Text('Reason', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
               const SizedBox(height: 5),
               TextField(
                 controller: reasonCtrl,
                 style: sans(12.5, color: C.textPrimary),
-                decoration: fieldDecoration(hintText: 'e.g. Annual lease renewal'),
+                decoration: fieldDecoration(hintText: 'e.g. Updated start date or rent review'),
               ),
               const SizedBox(height: 18),
               SizedBox(
@@ -487,6 +603,7 @@ void showAmendLeaseSheet(
                       : () async {
                           final rent = int.tryParse(rentCtrl.text.trim()) ?? lease.monthlyRent;
                           final dep = int.tryParse(depCtrl.text.trim()) ?? lease.depositAmount;
+                          final trimmedEnd = endCtrl.text.trim();
                           setMState(() {
                             isSaving = true;
                             errorMsg = null;
@@ -494,9 +611,12 @@ void showAmendLeaseSheet(
                           final res = await ApiService.amendLease(
                             lease.id,
                             changeType: changeType,
+                            newStartDate: startCtrl.text.trim(),
                             newRent: rent,
                             newDeposit: dep,
-                            newEndDate: endCtrl.text.trim(),
+                            newEndDate: trimmedEnd,
+                            clearEndDate: trimmedEnd.isEmpty,
+                            depositPaid: depositPaid,
                             reason: reasonCtrl.text.trim().isNotEmpty ? reasonCtrl.text.trim() : formatStatusLabel(changeType),
                           );
                           if (!ctx.mounted) return;
@@ -511,7 +631,7 @@ void showAmendLeaseSheet(
                         },
                   child: isSaving
                       ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: C.ctaOn))
-                      : Text('Save Amendment', style: sans(13, color: C.ctaOn, weight: FontWeight.w600)),
+                      : Text('Save Changes', style: sans(13, color: C.ctaOn, weight: FontWeight.w600)),
                 ),
               ),
             ],
@@ -992,14 +1112,14 @@ void showSendRemindersConfirmSheet(
   );
 }
 
-/// 9. Post Ledger Adjustment Sheet (Extra Charge or Credit/Waiver — NO automatic late fees)
+/// 9. Post Rent Ledger Adjustment Sheet (Rent/Deposit Charge or Rent Credit/Waiver — Rent Only, NO water/utilities)
 void showLedgerAdjustmentSheet(
   BuildContext context, {
   required TenantModel tenant,
   VoidCallback? onSaved,
 }) {
   String type = 'charge'; // 'charge' | 'credit'
-  String category = 'water';
+  String category = 'rent_adjustment';
   final amountCtrl = TextEditingController();
   final reasonCtrl = TextEditingController();
   bool isSaving = false;
@@ -1024,9 +1144,9 @@ void showLedgerAdjustmentSheet(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _handle(),
-              Text('Ledger Adjustment', style: flex(15, color: C.textPrimary, weight: FontWeight.w700)),
+              Text('Rent Ledger Adjustment', style: flex(15, color: C.textPrimary, weight: FontWeight.w700)),
               const SizedBox(height: 2),
-              Text(tenant.name, style: sans(12, color: C.textMuted)),
+              Text('${tenant.name} · Rent & Deposit Only', style: sans(12, color: C.textMuted)),
               const SizedBox(height: 12),
 
               if (errorMsg != null) ...[
@@ -1047,7 +1167,7 @@ void showLedgerAdjustmentSheet(
                       child: GestureDetector(
                         onTap: () => setMState(() {
                           type = 'charge';
-                          category = 'water';
+                          category = 'rent_adjustment';
                         }),
                         child: Container(
                           padding: const EdgeInsets.symmetric(vertical: 8),
@@ -1057,7 +1177,7 @@ void showLedgerAdjustmentSheet(
                           ),
                           alignment: Alignment.center,
                           child: Text(
-                            'Extra Charge',
+                            'Rent Charge',
                             style: sans(11.5, color: type == 'charge' ? Colors.white : C.textSecondary, weight: FontWeight.w600),
                           ),
                         ),
@@ -1097,14 +1217,13 @@ void showLedgerAdjustmentSheet(
                 decoration: fieldDecoration(),
                 items: type == 'charge'
                     ? const [
-                        DropdownMenuItem(value: 'water', child: Text('Water Bill')),
-                        DropdownMenuItem(value: 'garbage', child: Text('Garbage / Service')),
-                        DropdownMenuItem(value: 'damage', child: Text('Repair / Damage')),
-                        DropdownMenuItem(value: 'other', child: Text('Other Charge')),
+                        DropdownMenuItem(value: 'rent_adjustment', child: Text('Rent Balance Adjustment')),
+                        DropdownMenuItem(value: 'deposit_adjustment', child: Text('Security Deposit Adjustment')),
+                        DropdownMenuItem(value: 'damage', child: Text('Premises Repair / Damage')),
                       ]
                     : const [
                         DropdownMenuItem(value: 'waiver', child: Text('Rent Waiver / Discount')),
-                        DropdownMenuItem(value: 'credit_note', child: Text('Credit Note')),
+                        DropdownMenuItem(value: 'credit_note', child: Text('Rent Credit Note')),
                         DropdownMenuItem(value: 'overpayment_adj', child: Text('Balance Correction')),
                       ],
                 onChanged: (v) => setMState(() => category = v ?? category),
@@ -1118,7 +1237,7 @@ void showLedgerAdjustmentSheet(
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                 style: flex(14.5, color: C.textPrimary),
-                decoration: fieldDecoration(hintText: 'e.g. 1500', prefixText: 'KES '),
+                decoration: fieldDecoration(hintText: 'e.g. 5000', prefixText: 'KES '),
               ),
               const SizedBox(height: 12),
 
@@ -1127,7 +1246,7 @@ void showLedgerAdjustmentSheet(
               TextField(
                 controller: reasonCtrl,
                 style: sans(12.5, color: C.textPrimary),
-                decoration: fieldDecoration(hintText: 'e.g. November water meter reading'),
+                decoration: fieldDecoration(hintText: 'e.g. Agreed rent balance correction'),
               ),
               const SizedBox(height: 16),
 
@@ -1278,7 +1397,7 @@ void showMoveOutSettlementSheet(
                 ),
                 const SizedBox(height: 12),
 
-                Text('Deductions (Repairs / Utilities / Cleaning)', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
+                Text('Deposit Deductions (Rent Arrears / Repairs)', style: sans(11.5, color: C.textSecondary, weight: FontWeight.w600)),
                 const SizedBox(height: 5),
                 TextField(
                   controller: deductionsCtrl,
@@ -1295,7 +1414,7 @@ void showMoveOutSettlementSheet(
                 TextField(
                   controller: notesCtrl,
                   style: sans(12.5, color: C.textPrimary),
-                  decoration: fieldDecoration(hintText: 'e.g. Keys returned, final water reading'),
+                  decoration: fieldDecoration(hintText: 'e.g. Keys returned, joint move-out inspection'),
                 ),
                 const SizedBox(height: 16),
 

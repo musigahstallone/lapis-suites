@@ -600,24 +600,67 @@ class DashboardData {
   int get totalRentRoll => leases
       .where((l) => l.isActive)
       .fold(0, (sum, l) => sum + l.monthlyRent);
+
+  String get _currentYearMonth {
+    final now = DateTime.now();
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}';
+  }
+
+  /// Deposits expected this calendar month (leases starting this month + any unpaid security deposits)
+  int get depositsExpectedThisMonth {
+    final ym = _currentYearMonth;
+    return leases
+        .where((l) => l.isActive)
+        .fold(0, (sum, l) {
+          final startedThisMonth = l.startDate.startsWith(ym);
+          final unpaidDeposit = !l.isDepositSettled;
+          return sum + ((startedThisMonth || unpaidDeposit) ? l.depositAmount : 0);
+        });
+  }
+
+  /// Total expected this month: Monthly Rent Roll + Expected Deposits
+  int get totalExpectedThisMonth => totalRentRoll + depositsExpectedThisMonth;
+
+  /// Arrears carried over from months prior to the current calendar month (FIFO per lease)
+  int get priorMonthsArrears {
+    final ym = _currentYearMonth;
+    int total = 0;
+    for (final l in leases.where((x) => x.isActive)) {
+      final startedThisMonth = l.startDate.startsWith(ym);
+      final currentMonthNewCharges = l.monthlyRent + (startedThisMonth ? l.depositAmount : 0);
+      final billed = l.leaseBilled ?? (l.depositAmount + l.monthlyRent);
+      final paid = l.leasePaid ??
+          transactions
+              .where((tx) =>
+                  tx.reconciled &&
+                  ((tx.leaseId != null && tx.leaseId == l.id) ||
+                      ((tx.leaseId == null || tx.leaseId!.isEmpty) && tx.unitNumber == l.unitNumber)))
+              .fold<int>(0, (s, tx) => s + tx.amount);
+      final priorBilled = (billed - currentMonthNewCharges) > 0 ? (billed - currentMonthNewCharges) : 0;
+      final priorUnpaid = priorBilled - paid;
+      if (priorUnpaid > 0) total += priorUnpaid;
+    }
+    return total;
+  }
+
   int get totalArrears => tenants.fold(0, (sum, t) => sum + t.effectiveBalanceDue);
   int get totalCredits => tenants.fold(0, (sum, t) => sum + t.accountCredit);
   int get occupiedUnits => units.where((u) => u.isOccupied).length;
   double get occupancyRate => units.isEmpty ? 0 : (occupiedUnits / units.length) * 100;
 
-  /// Reconciled rent collected in the current calendar month (YYYY-MM)
+  /// Reconciled rent & deposit payments received in the current calendar month (YYYY-MM)
   int get collectedThisMonth {
-    final now = DateTime.now();
-    final ym = '${now.year}-${now.month.toString().padLeft(2, '0')}';
+    final ym = _currentYearMonth;
     return transactions
         .where((tx) => tx.reconciled && (tx.date.startsWith(ym) || tx.timestamp.startsWith(ym)))
         .fold(0, (sum, tx) => sum + tx.amount);
   }
 
-  /// Ratio (0.0 .. 1.0) of monthly rent collected vs expected rent roll
+  /// Ratio (0.0 .. 1.0) of received this month vs total expected this month (rent + deposits)
   double get collectionProgress {
-    if (totalRentRoll <= 0) return 0.0;
-    return (collectedThisMonth / totalRentRoll).clamp(0.0, 1.0);
+    final expected = totalExpectedThisMonth;
+    if (expected <= 0) return 0.0;
+    return (collectedThisMonth / expected).clamp(0.0, 1.0);
   }
 }
 

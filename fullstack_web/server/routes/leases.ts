@@ -71,19 +71,25 @@ router.get('/leases/:id', authenticateToken, async (req: AuthRequest, res: Respo
   }
 })
 
-// POST /api/leases (Landlord only)
+// POST /api/leases (Landlord only — endDate is OPTIONAL and blank unless specified)
 router.post('/leases', authenticateToken, requireRole(['landlord']), async (req: AuthRequest, res: Response) => {
   try {
     const db = getDb()
     const { tenantId, unitId, startDate, endDate, monthlyRent, depositAmount, depositPaid, terms } = req.body
-    if (!tenantId || !unitId || !startDate || !endDate) {
-      return res.status(400).json({ error: 'Tenant, Unit, Start Date, and End Date are required' })
+    if (!tenantId || !unitId || !startDate) {
+      return res.status(400).json({ error: 'Tenant, Unit, and Start Date are required' })
     }
-    if (!isIsoDate(startDate) || !isIsoDate(endDate)) {
-      return res.status(400).json({ error: 'Start Date and End Date must be valid YYYY-MM-DD dates.' })
+    if (!isIsoDate(startDate)) {
+      return res.status(400).json({ error: 'Start Date must be a valid YYYY-MM-DD date.' })
     }
-    if (String(endDate) < String(startDate)) {
-      return res.status(400).json({ error: 'End Date cannot be earlier than Start Date.' })
+    const cleanEndDate = endDate && String(endDate).trim() ? String(endDate).trim() : ''
+    if (cleanEndDate) {
+      if (!isIsoDate(cleanEndDate)) {
+        return res.status(400).json({ error: 'End Date must be a valid YYYY-MM-DD date or left blank.' })
+      }
+      if (cleanEndDate < String(startDate)) {
+        return res.status(400).json({ error: 'End Date cannot be earlier than Start Date.' })
+      }
     }
     const validatedRent = parsePositiveAmount(monthlyRent)
     if (validatedRent === null) {
@@ -113,7 +119,7 @@ router.post('/leases', authenticateToken, requireRole(['landlord']), async (req:
     const leaseId = generateHexObjectId()
     const leaseNumber = `LPS-L${Math.floor(1000 + Math.random() * 9000)}`
     const rentNum = Number(monthlyRent || 0)
-    const depNum = Number(depositAmount || rentNum)
+    const depNum = depositAmount !== undefined ? Number(depositAmount) : rentNum
     const isDepositPaid = Boolean(depositPaid)
 
     const configuredDueDay = await getRentDueDay()
@@ -126,12 +132,12 @@ router.post('/leases', authenticateToken, requireRole(['landlord']), async (req:
       unitNumber: unit.unitNumber,
       unitType: unit.type,
       startDate,
-      endDate,
+      endDate: cleanEndDate,
       monthlyRent: rentNum,
       depositAmount: depNum,
       depositPaid: isDepositPaid,
       status: isDepositPaid ? 'active' : 'pending_deposit',
-      terms: terms || `Residential Tenancy Agreement for Unit ${unit.unitNumber} managed by LAPIS APARTMENTS LIMITED. Monthly rent due on Day ${configuredDueDay} strictly via M-Pesa Paybill 522533, Account 8107578. Refundable security deposit held subject to move-out inspection; minimum 1 calendar month written notice required prior to vacating; governed by the Laws of Kenya.`,
+      terms: terms || `Residential Tenancy Agreement for Unit ${unit.unitNumber} managed by LAPIS APARTMENTS LIMITED. Landlord collects monthly rent and refundable security deposit only (water and electricity are settled directly by the resident with utility providers). Rent due on Day ${configuredDueDay} strictly via M-Pesa Paybill 522533, Account 8107578; minimum 1 calendar month written notice prior to vacating; governed by the Laws of Kenya.`,
       nextPaymentDueDate: computeNextPaymentDueDate(startDate, configuredDueDay),
       createdAt: new Date().toISOString()
     }
@@ -327,11 +333,10 @@ router.post('/leases/transfer', authenticateToken, requireRole(['landlord']), as
       )
     }
 
-    // 2. Create new lease for new unit
+    // 2. Create new lease for new unit (endDate left blank/open-ended unless explicitly supplied)
     const newLeaseId = generateHexObjectId()
     const leaseNumber = `LPS-L${Math.floor(1000 + Math.random() * 9000)}`
-    const oneYearLater = new Date()
-    oneYearLater.setFullYear(oneYearLater.getFullYear() + 1)
+    const transferEndDate = req.body.endDate && String(req.body.endDate).trim() ? String(req.body.endDate).trim() : ''
 
     const newLease = {
       id: newLeaseId,
@@ -342,7 +347,7 @@ router.post('/leases/transfer', authenticateToken, requireRole(['landlord']), as
       unitNumber: newUnit.unitNumber,
       unitType: newUnit.type,
       startDate: transferDate || nowIso.slice(0, 10),
-      endDate: oneYearLater.toISOString().slice(0, 10),
+      endDate: transferEndDate,
       monthlyRent: Number(newRent || 0),
       depositAmount: Number(newRent || 0),
       depositPaid: Boolean(depositRollOver),
@@ -396,15 +401,35 @@ router.post('/leases/transfer', authenticateToken, requireRole(['landlord']), as
   }
 })
 
-// POST /api/leases/:id/amend (Landlord only)
+// POST /api/leases/:id/amend (Landlord only — supports editing startDate, optional/blank endDate, rent, deposit, depositPaid, and notes)
 router.post('/leases/:id/amend', authenticateToken, requireRole(['landlord']), async (req: AuthRequest, res: Response) => {
   try {
     const db = getDb()
     const id = String(req.params.id)
-    const { changeType, effectiveDate, newRent, newEndDate, newDeposit, reason, notes } = req.body
+    const { changeType, effectiveDate, newStartDate, newRent, newEndDate, clearEndDate, newDeposit, depositPaid, reason, notes } = req.body
 
     const lease = await db.collection('leases').findOne({ id })
     if (!lease) return res.status(404).json({ error: 'Lease agreement not found' })
+
+    const cleanNewStart = newStartDate && String(newStartDate).trim() ? String(newStartDate).trim() : ''
+    if (cleanNewStart && !isIsoDate(cleanNewStart)) {
+      return res.status(400).json({ error: 'Start Date must be a valid YYYY-MM-DD date.' })
+    }
+    const effectiveStart = cleanNewStart || lease.startDate
+
+    let resolvedEndDate = lease.endDate || ''
+    if (clearEndDate === true || newEndDate === '') {
+      resolvedEndDate = ''
+    } else if (newEndDate && String(newEndDate).trim()) {
+      const cleanEnd = String(newEndDate).trim()
+      if (!isIsoDate(cleanEnd)) {
+        return res.status(400).json({ error: 'End Date must be a valid YYYY-MM-DD date or left blank.' })
+      }
+      if (effectiveStart && cleanEnd < effectiveStart) {
+        return res.status(400).json({ error: 'End Date cannot be earlier than Start Date.' })
+      }
+      resolvedEndDate = cleanEnd
+    }
 
     const nowIso = new Date().toISOString()
     const amendmentId = generateHexObjectId()
@@ -418,10 +443,12 @@ router.post('/leases/:id/amend', authenticateToken, requireRole(['landlord']), a
       tenantName: lease.tenantName,
       changeType: changeType || 'rent_adjustment',
       effectiveDate: effectiveDate || nowIso.slice(0, 10),
+      previousStartDate: lease.startDate,
+      newStartDate: effectiveStart,
       previousRent: lease.monthlyRent,
       newRent: newRent !== undefined && Number(newRent) > 0 ? Number(newRent) : lease.monthlyRent,
-      previousEndDate: lease.endDate,
-      newEndDate: newEndDate || lease.endDate,
+      previousEndDate: lease.endDate || '',
+      newEndDate: resolvedEndDate,
       previousDeposit: lease.depositAmount,
       newDeposit: newDeposit !== undefined ? Number(newDeposit) : lease.depositAmount,
       reason: reason || 'Contractual amendment',
@@ -432,14 +459,23 @@ router.post('/leases/:id/amend', authenticateToken, requireRole(['landlord']), a
     await db.collection('lease_amendments').insertOne(amendment)
 
     const leaseUpdates: any = { updatedAt: nowIso }
+    if (cleanNewStart) {
+      leaseUpdates.startDate = cleanNewStart
+    }
     if (newRent !== undefined && Number(newRent) > 0) {
       leaseUpdates.monthlyRent = Number(newRent)
     }
-    if (newEndDate) {
-      leaseUpdates.endDate = newEndDate
+    if (clearEndDate === true || newEndDate !== undefined) {
+      leaseUpdates.endDate = resolvedEndDate
     }
-    if (newDeposit !== undefined && Number(newDeposit) > 0) {
+    if (newDeposit !== undefined && Number(newDeposit) >= 0) {
       leaseUpdates.depositAmount = Number(newDeposit)
+    }
+    if (depositPaid !== undefined) {
+      leaseUpdates.depositPaid = Boolean(depositPaid)
+      if (lease.status !== 'terminated' && lease.status !== 'transferred') {
+        leaseUpdates.status = Boolean(depositPaid) ? 'active' : 'pending_deposit'
+      }
     }
     if (notes) {
       leaseUpdates.terms = `${lease.terms || ''}\n[Amendment ${effectiveDate || nowIso.slice(0, 10)}: ${reason} - ${notes}]`.trim()
